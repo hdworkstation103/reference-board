@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import './App.css'
 
 type BoardImage = {
@@ -77,13 +84,12 @@ type MarqueeState = {
   currentY: number
 }
 
-const MIN_BOARD_WIDTH = 2400
-const MIN_BOARD_HEIGHT = 1600
-const BOARD_PADDING = 600
 const START_X = 100
 const START_Y = 100
 const IMAGE_WIDTH = 280
 const MIN_IMAGE_WIDTH = 80
+const WORLD_SIZE = 120000
+const WORLD_ORIGIN = WORLD_SIZE / 2
 
 const getItemRect = (item: BoardImage): ItemRect => ({
   left: item.x,
@@ -128,7 +134,6 @@ function App() {
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(null)
-  const [boardSize, setBoardSize] = useState({ width: MIN_BOARD_WIDTH, height: MIN_BOARD_HEIGHT })
   const boardRef = useRef<HTMLDivElement | null>(null)
   const boardWrapRef = useRef<HTMLDivElement | null>(null)
   const nextIdRef = useRef(1)
@@ -180,22 +185,16 @@ function App() {
 
   useEffect(() => {
     const wrapper = boardWrapRef.current
-    const viewportWidth = wrapper?.clientWidth ?? 0
-    const viewportHeight = wrapper?.clientHeight ?? 0
-
-    let maxX = 0
-    let maxY = 0
-    for (const image of images) {
-      const rect = getItemRect(image)
-      maxX = Math.max(maxX, rect.right)
-      maxY = Math.max(maxY, rect.bottom)
+    if (!wrapper) {
+      return
     }
 
-    setBoardSize({
-      width: Math.max(MIN_BOARD_WIDTH, viewportWidth + BOARD_PADDING, maxX + BOARD_PADDING),
-      height: Math.max(MIN_BOARD_HEIGHT, viewportHeight + BOARD_PADDING, maxY + BOARD_PADDING),
+    wrapper.scrollTo({
+      left: WORLD_ORIGIN - wrapper.clientWidth / 2,
+      top: WORLD_ORIGIN - wrapper.clientHeight / 2,
+      behavior: 'auto',
     })
-  }, [images])
+  }, [])
 
   useEffect(() => {
     const activeGroupIds = selectedIds.filter((id) => images.some((item) => item.id === id))
@@ -233,20 +232,23 @@ function App() {
   }, [selectedIds, images])
 
   const getBoardPointer = (event: ReactPointerEvent) => {
-    const board = boardRef.current
+    return getBoardPointFromClient(event.clientX, event.clientY)
+  }
+
+  const getBoardPointFromClient = (clientX: number, clientY: number) => {
     const wrapper = boardWrapRef.current
-    if (!board || !wrapper) {
+    if (!wrapper) {
       return null
     }
 
-    const boardRect = board.getBoundingClientRect()
+    const wrapperRect = wrapper.getBoundingClientRect()
     return {
-      x: event.clientX - boardRect.left + wrapper.scrollLeft,
-      y: event.clientY - boardRect.top + wrapper.scrollTop,
+      x: clientX - wrapperRect.left + wrapper.scrollLeft - WORLD_ORIGIN,
+      y: clientY - wrapperRect.top + wrapper.scrollTop - WORLD_ORIGIN,
     }
   }
 
-  const handleFiles = (fileList: FileList | null) => {
+  const handleFiles = (fileList: FileList | null, anchor?: { x: number; y: number }) => {
     if (!fileList || fileList.length === 0) {
       return
     }
@@ -262,15 +264,19 @@ function App() {
         const src = URL.createObjectURL(file)
         objectUrlsRef.current.push(src)
         const id = nextIdRef.current++
-        const row = Math.floor((current.length + i) / cols)
-        const col = (current.length + i) % cols
+        const row = Math.floor(i / cols)
+        const col = i % cols
+        const x = anchor
+          ? anchor.x - IMAGE_WIDTH / 2 + col * (IMAGE_WIDTH + 30)
+          : START_X + ((current.length + i) % cols) * (IMAGE_WIDTH + 30)
+        const y = anchor ? anchor.y + row * 220 : START_Y + Math.floor((current.length + i) / cols) * 220
 
         return {
           id,
           src,
           name: file.name,
-          x: START_X + col * (IMAGE_WIDTH + 30),
-          y: START_Y + row * 220,
+          x,
+          y,
           width: IMAGE_WIDTH,
           z: nextZRef.current++,
         }
@@ -499,8 +505,8 @@ function App() {
     }
 
     if (interaction.kind === 'move') {
-      const x = Math.max(0, point.x - interaction.offsetX)
-      const y = Math.max(0, point.y - interaction.offsetY)
+      const x = point.x - interaction.offsetX
+      const y = point.y - interaction.offsetY
 
       setImages((current) =>
         current.map((item) =>
@@ -550,8 +556,8 @@ function App() {
 
           return {
             ...item,
-            x: Math.max(0, start.x + deltaX),
-            y: Math.max(0, start.y + deltaY),
+            x: start.x + deltaX,
+            y: start.y + deltaY,
           }
         }),
       )
@@ -575,8 +581,8 @@ function App() {
 
         return {
           ...item,
-          x: Math.max(0, interaction.startBounds.left + (start.x - interaction.startBounds.left) * scale),
-          y: Math.max(0, interaction.startBounds.top + (start.y - interaction.startBounds.top) * scale),
+          x: interaction.startBounds.left + (start.x - interaction.startBounds.left) * scale,
+          y: interaction.startBounds.top + (start.y - interaction.startBounds.top) * scale,
           width: Math.max(MIN_IMAGE_WIDTH, start.width * scale),
         }
       }),
@@ -609,8 +615,8 @@ function App() {
     }
 
     wrapper.scrollTo({
-      left: 0,
-      top: 0,
+      left: WORLD_ORIGIN - wrapper.clientWidth / 2,
+      top: WORLD_ORIGIN - wrapper.clientHeight / 2,
       behavior: 'smooth',
     })
   }
@@ -675,6 +681,17 @@ function App() {
         <div
           className="board"
           ref={boardRef}
+          onDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
+            if (event.dataTransfer.types.includes('Files')) {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'copy'
+            }
+          }}
+          onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
+            event.preventDefault()
+            const point = getBoardPointFromClient(event.clientX, event.clientY)
+            handleFiles(event.dataTransfer.files, point ?? undefined)
+          }}
           onPointerDown={(event) => {
             if (event.target !== event.currentTarget || event.button !== 0) {
               return
@@ -699,14 +716,14 @@ function App() {
             setSelectedId(null)
             setSelectedIds([])
           }}
-          style={{ width: `${boardSize.width}px`, height: `${boardSize.height}px` }}
+          style={{ width: `${WORLD_SIZE}px`, height: `${WORLD_SIZE}px` }}
         >
           {images.map((image) => (
             <figure
               key={image.id}
               className={`board-image ${selectedSet.has(image.id) ? 'selected' : ''}`}
               style={{
-                transform: `translate(${image.x}px, ${image.y}px)`,
+                transform: `translate(${image.x + WORLD_ORIGIN}px, ${image.y + WORLD_ORIGIN}px)`,
                 width: `${image.width}px`,
                 zIndex: image.z,
               }}
@@ -727,8 +744,8 @@ function App() {
             <div
               className={`group-container ${groupOverlay.active ? 'active' : 'inactive'}`}
               style={{
-                left: `${groupOverlay.bounds.left}px`,
-                top: `${groupOverlay.bounds.top}px`,
+                left: `${groupOverlay.bounds.left + WORLD_ORIGIN}px`,
+                top: `${groupOverlay.bounds.top + WORLD_ORIGIN}px`,
                 width: `${groupOverlay.bounds.width}px`,
                 height: `${groupOverlay.bounds.height}px`,
               }}
@@ -758,8 +775,8 @@ function App() {
             <div
               className="selection-marquee"
               style={{
-                left: `${Math.min(marquee.startX, marquee.currentX)}px`,
-                top: `${Math.min(marquee.startY, marquee.currentY)}px`,
+                left: `${Math.min(marquee.startX, marquee.currentX) + WORLD_ORIGIN}px`,
+                top: `${Math.min(marquee.startY, marquee.currentY) + WORLD_ORIGIN}px`,
                 width: `${Math.abs(marquee.currentX - marquee.startX)}px`,
                 height: `${Math.abs(marquee.currentY - marquee.startY)}px`,
               }}
