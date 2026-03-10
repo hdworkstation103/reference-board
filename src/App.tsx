@@ -12,12 +12,15 @@ type BoardImage = {
   id: number
   src: string
   name: string
+  mediaKind: 'image' | 'video'
   x: number
   y: number
   width: number
   aspect: number
   z: number
 }
+
+type PreparedMedia = Pick<BoardImage, 'id' | 'src' | 'name' | 'mediaKind' | 'z'>
 
 type ItemRect = {
   left: number
@@ -472,18 +475,21 @@ function App() {
       return
     }
 
-    const files = Array.from(fileList).filter((file) => file.type.startsWith('image/'))
+    const files = Array.from(fileList).filter(
+      (file) => file.type.startsWith('image/') || file.type.startsWith('video/'),
+    )
     if (files.length === 0) {
       return
     }
 
-    const prepared = files.map((file) => {
+    const prepared: PreparedMedia[] = files.map((file) => {
       const src = URL.createObjectURL(file)
       objectUrlsRef.current.push(src)
       return {
         id: nextIdRef.current++,
         src,
         name: file.name,
+        mediaKind: file.type.startsWith('video/') ? 'video' : 'image',
         z: nextZRef.current++,
       }
     })
@@ -502,6 +508,7 @@ function App() {
           id: item.id,
           src: item.src,
           name: item.name,
+          mediaKind: item.mediaKind,
           x,
           y,
           width: IMAGE_WIDTH,
@@ -915,7 +922,7 @@ function App() {
         <input
           id="image-picker"
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           multiple
           onChange={(event) => {
             handleFiles(event.target.files)
@@ -1017,35 +1024,71 @@ function App() {
               }}
               onPointerDown={(event) => onPointerDown(event, image.id)}
             >
-              <img
-                src={image.src}
-                alt={image.name}
-                draggable={false}
-                onLoad={(event) => {
-                  const imgEl = event.currentTarget
-                  if (!imgEl.naturalWidth || !imgEl.naturalHeight) {
-                    return
-                  }
+              {image.mediaKind === 'video' ? (
+                <video
+                  src={image.src}
+                  muted
+                  loop
+                  autoPlay
+                  playsInline
+                  preload="metadata"
+                  draggable={false}
+                  onLoadedMetadata={(event) => {
+                    const videoEl = event.currentTarget
+                    if (!videoEl.videoWidth || !videoEl.videoHeight) {
+                      return
+                    }
 
-                  const nextAspect = imgEl.naturalHeight / imgEl.naturalWidth
-                  setImages((current) =>
-                    current.map((item) => {
-                      if (item.id !== image.id) {
-                        return item
-                      }
+                    const nextAspect = videoEl.videoHeight / videoEl.videoWidth
+                    setImages((current) =>
+                      current.map((item) => {
+                        if (item.id !== image.id) {
+                          return item
+                        }
 
-                      if (Math.abs(item.aspect - nextAspect) < 0.001) {
-                        return item
-                      }
+                        if (Math.abs(item.aspect - nextAspect) < 0.001) {
+                          return item
+                        }
 
-                      return {
-                        ...item,
-                        aspect: nextAspect,
-                      }
-                    }),
-                  )
-                }}
-              />
+                        return {
+                          ...item,
+                          aspect: nextAspect,
+                        }
+                      }),
+                    )
+                  }}
+                />
+              ) : (
+                <img
+                  src={image.src}
+                  alt={image.name}
+                  draggable={false}
+                  onLoad={(event) => {
+                    const imgEl = event.currentTarget
+                    if (!imgEl.naturalWidth || !imgEl.naturalHeight) {
+                      return
+                    }
+
+                    const nextAspect = imgEl.naturalHeight / imgEl.naturalWidth
+                    setImages((current) =>
+                      current.map((item) => {
+                        if (item.id !== image.id) {
+                          return item
+                        }
+
+                        if (Math.abs(item.aspect - nextAspect) < 0.001) {
+                          return item
+                        }
+
+                        return {
+                          ...item,
+                          aspect: nextAspect,
+                        }
+                      }),
+                    )
+                  }}
+                />
+              )}
               <figcaption>{image.name}</figcaption>
               <button
                 type="button"

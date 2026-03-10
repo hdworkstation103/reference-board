@@ -141,6 +141,12 @@
   pointer-events: none;
 }
 
+.board-image video {
+  width: 100%;
+  display: block;
+  pointer-events: none;
+}
+
 .board-image figcaption {
   padding: 4px 8px;
   font-size: 11px;
