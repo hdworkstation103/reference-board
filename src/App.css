@@ -58,10 +58,12 @@
   touch-action: none;
 }
 
+.board-wrap.panning {
+  cursor: grabbing;
+}
+
 .board {
   position: relative;
-  width: 4000px;
-  height: 2600px;
   background-color: #f8fafc;
   background-image:
     linear-gradient(#e4e9ef 1px, transparent 1px),
@@ -81,6 +83,13 @@
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
   background: #fff;
   border: 1px solid #d2dbe5;
+}
+
+.board-image.selected {
+  border: 2px solid #2d7ff0;
+  box-shadow:
+    0 0 0 2px rgba(45, 127, 240, 0.25),
+    0 6px 20px rgba(0, 0, 0, 0.2);
 }
 
 .board-image:active {
@@ -103,6 +112,27 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.resize-handle {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #6d7884;
+  border-radius: 4px;
+  background:
+    linear-gradient(135deg, transparent 50%, #6d7884 50%),
+    #f3f6f9;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.resize-handle:hover {
+  background:
+    linear-gradient(135deg, transparent 50%, #4f5a66 50%),
+    #eef3f8;
 }
 
 @media (max-width: 700px) {
