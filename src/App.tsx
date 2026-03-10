@@ -15,6 +15,7 @@ type BoardImage = {
   x: number
   y: number
   width: number
+  aspect: number
   z: number
 }
 
@@ -90,13 +91,15 @@ const IMAGE_WIDTH = 280
 const MIN_IMAGE_WIDTH = 80
 const WORLD_SIZE = 120000
 const WORLD_ORIGIN = WORLD_SIZE / 2
+const CAPTION_HEIGHT = 22
+const CARD_BORDER_HEIGHT = 2
 
+const getItemHeight = (item: BoardImage) => item.width * item.aspect + CAPTION_HEIGHT + CARD_BORDER_HEIGHT
 const getItemRect = (item: BoardImage): ItemRect => ({
   left: item.x,
   top: item.y,
   right: item.x + item.width,
-  // Approximate height from width; sufficient for coarse selection/group bounds.
-  bottom: item.y + item.width + 40,
+  bottom: item.y + getItemHeight(item),
 })
 
 const getGroupBounds = (ids: number[], images: BoardImage[]): GroupBounds | null => {
@@ -278,6 +281,7 @@ function App() {
           x,
           y,
           width: IMAGE_WIDTH,
+          aspect: 1,
           z: nextZRef.current++,
         }
       })
@@ -342,6 +346,28 @@ function App() {
       })
       setSelectedId(duplicateId)
       setSelectedIds([duplicateId])
+
+      ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+      return
+    }
+
+    if (selectedIds.length > 1 && selectedSet.has(id)) {
+      const activeIds = selectedIds.filter((selected) => images.some((item) => item.id === selected))
+      const startPositions: Record<number, { x: number; y: number }> = {}
+      for (const item of images) {
+        if (activeIds.includes(item.id)) {
+          startPositions[item.id] = { x: item.x, y: item.y }
+        }
+      }
+
+      setSelectedId(id)
+      setInteraction({
+        kind: 'move-group',
+        ids: activeIds,
+        startPointerX: point.x,
+        startPointerY: point.y,
+        startPositions,
+      })
 
       ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
       return
@@ -729,7 +755,35 @@ function App() {
               }}
               onPointerDown={(event) => onPointerDown(event, image.id)}
             >
-              <img src={image.src} alt={image.name} draggable={false} />
+              <img
+                src={image.src}
+                alt={image.name}
+                draggable={false}
+                onLoad={(event) => {
+                  const imgEl = event.currentTarget
+                  if (!imgEl.naturalWidth || !imgEl.naturalHeight) {
+                    return
+                  }
+
+                  const nextAspect = imgEl.naturalHeight / imgEl.naturalWidth
+                  setImages((current) =>
+                    current.map((item) => {
+                      if (item.id !== image.id) {
+                        return item
+                      }
+
+                      if (Math.abs(item.aspect - nextAspect) < 0.001) {
+                        return item
+                      }
+
+                      return {
+                        ...item,
+                        aspect: nextAspect,
+                      }
+                    }),
+                  )
+                }}
+              />
               <figcaption>{image.name}</figcaption>
               <button
                 type="button"
