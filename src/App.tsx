@@ -94,6 +94,14 @@ type ScaleModeState = {
   minScale: number
   startItems: Record<number, { x: number; y: number; width: number }>
 }
+type MoveModeState = {
+  ids: number[]
+  startPointerX: number
+  startPointerY: number
+  offsetX: number
+  offsetY: number
+  startItems: Record<number, { x: number; y: number; width: number }>
+}
 
 type PanState = {
   startClientX: number
@@ -167,6 +175,7 @@ function App() {
   const [darkMode, setDarkMode] = useState(false)
   const [interaction, setInteraction] = useState<InteractionState | null>(null)
   const [scaleMode, setScaleMode] = useState<ScaleModeState | null>(null)
+  const [moveMode, setMoveMode] = useState<MoveModeState | null>(null)
   const [pan, setPan] = useState<PanState | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
@@ -271,6 +280,44 @@ function App() {
     )
 
     setScaleMode(null)
+  }
+
+  const applyMoveMode = () => {
+    if (!moveMode) {
+      return
+    }
+
+    setImages((current) =>
+      current.map((item) => {
+        if (!moveMode.ids.includes(item.id)) {
+          return item
+        }
+
+        const start = moveMode.startItems[item.id]
+        if (!start) {
+          return item
+        }
+
+        return {
+          ...item,
+          x: start.x + moveMode.offsetX,
+          y: start.y + moveMode.offsetY,
+        }
+      }),
+    )
+
+    setMoveMode(null)
+  }
+
+  const applyTransformMode = () => {
+    if (scaleMode) {
+      applyScaleMode()
+      return
+    }
+
+    if (moveMode) {
+      applyMoveMode()
+    }
   }
 
   useEffect(() => {
@@ -380,9 +427,10 @@ function App() {
         return
       }
 
-      if (event.key === 'Escape' && scaleMode) {
+      if (event.key === 'Escape' && (scaleMode || moveMode)) {
         event.preventDefault()
         setScaleMode(null)
+        setMoveMode(null)
         return
       }
 
@@ -392,6 +440,10 @@ function App() {
         if (scaleMode) {
           setScaleMode(null)
           return
+        }
+
+        if (moveMode) {
+          setMoveMode(null)
         }
 
         const activeIds = selectedIds.length > 0 ? selectedIds : selectedId !== null ? [selectedId] : []
@@ -435,6 +487,45 @@ function App() {
           startDistance: distance,
           previewScale: 1,
           minScale: Number.isFinite(minScale) ? minScale : 0.1,
+          startItems,
+        })
+        return
+      }
+
+      if ((event.key === 'g' || event.key === 'G') && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault()
+
+        if (moveMode) {
+          setMoveMode(null)
+          return
+        }
+
+        if (scaleMode) {
+          setScaleMode(null)
+        }
+
+        const activeIds = selectedIds.length > 0 ? selectedIds : selectedId !== null ? [selectedId] : []
+        if (activeIds.length === 0) {
+          return
+        }
+
+        const selected = images.filter((item) => activeIds.includes(item.id))
+        if (selected.length === 0) {
+          return
+        }
+
+        const pointer = lastPointerRef.current
+        const startItems: Record<number, { x: number; y: number; width: number }> = {}
+        for (const item of selected) {
+          startItems[item.id] = { x: item.x, y: item.y, width: item.width }
+        }
+
+        setMoveMode({
+          ids: selected.map((item) => item.id),
+          startPointerX: pointer.x,
+          startPointerY: pointer.y,
+          offsetX: 0,
+          offsetY: 0,
           startItems,
         })
         return
@@ -595,7 +686,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [images, scaleMode, selectedId, selectedIds])
+  }, [images, moveMode, scaleMode, selectedId, selectedIds])
 
   useEffect(() => {
     const wrapper = boardWrapRef.current
@@ -739,10 +830,10 @@ function App() {
   }
 
   const onPointerDown = (event: ReactPointerEvent, id: number) => {
-    if (event.button === 0 && scaleMode) {
+    if (event.button === 0 && (scaleMode || moveMode)) {
       event.preventDefault()
       event.stopPropagation()
-      applyScaleMode()
+      applyTransformMode()
       return
     }
 
@@ -853,10 +944,10 @@ function App() {
   }
 
   const onResizePointerDown = (event: ReactPointerEvent, id: number) => {
-    if (event.button === 0 && scaleMode) {
+    if (event.button === 0 && (scaleMode || moveMode)) {
       event.preventDefault()
       event.stopPropagation()
-      applyScaleMode()
+      applyTransformMode()
       return
     }
 
@@ -982,10 +1073,10 @@ function App() {
   }
 
   const startGroupMove = (event: ReactPointerEvent, ids: number[]) => {
-    if (event.button === 0 && scaleMode) {
+    if (event.button === 0 && (scaleMode || moveMode)) {
       event.preventDefault()
       event.stopPropagation()
-      applyScaleMode()
+      applyTransformMode()
       return
     }
 
@@ -1026,10 +1117,10 @@ function App() {
   }
 
   const startGroupResize = (event: ReactPointerEvent, ids: number[], bounds: GroupBounds) => {
-    if (event.button === 0 && scaleMode) {
+    if (event.button === 0 && (scaleMode || moveMode)) {
       event.preventDefault()
       event.stopPropagation()
-      applyScaleMode()
+      applyTransformMode()
       return
     }
 
@@ -1112,6 +1203,25 @@ function App() {
         return {
           ...current,
           previewScale: nextScale,
+        }
+      })
+      return
+    }
+
+    if (moveMode) {
+      const nextOffsetX = point.x - moveMode.startPointerX
+      const nextOffsetY = point.y - moveMode.startPointerY
+      setMoveMode((current) => {
+        if (!current) {
+          return current
+        }
+        if (Math.abs(current.offsetX - nextOffsetX) < 0.1 && Math.abs(current.offsetY - nextOffsetY) < 0.1) {
+          return current
+        }
+        return {
+          ...current,
+          offsetX: nextOffsetX,
+          offsetY: nextOffsetY,
         }
       })
       return
@@ -1259,6 +1369,8 @@ function App() {
     setGroupOverlay(null)
     setGroups([])
     setSeekPanelId(null)
+    setScaleMode(null)
+    setMoveMode(null)
   }
 
   const centerView = () => {
@@ -1303,12 +1415,12 @@ function App() {
       </header>
 
       <section
-        className={`board-wrap ${pan ? 'panning' : ''} ${scaleMode ? 'scale-mode' : ''}`}
+        className={`board-wrap ${pan ? 'panning' : ''} ${scaleMode ? 'scale-mode' : ''} ${moveMode ? 'move-mode' : ''}`}
         ref={boardWrapRef}
         onPointerDown={(event) => {
-          if (event.button === 0 && scaleMode) {
+          if (event.button === 0 && (scaleMode || moveMode)) {
             event.preventDefault()
-            applyScaleMode()
+            applyTransformMode()
             return
           }
 
@@ -1355,9 +1467,9 @@ function App() {
             handleFiles(event.dataTransfer.files, point ?? undefined)
           }}
           onPointerDown={(event) => {
-            if (event.button === 0 && scaleMode) {
+            if (event.button === 0 && (scaleMode || moveMode)) {
               event.preventDefault()
-              applyScaleMode()
+              applyTransformMode()
               return
             }
 
@@ -1388,12 +1500,19 @@ function App() {
         >
           {images.map((image) => (
             (() => {
-              const preview = scaleMode ? scaleMode.startItems[image.id] : null
-              const displayX = preview ? scaleMode!.centerX + (preview.x - scaleMode!.centerX) * scaleMode!.previewScale : image.x
-              const displayY = preview ? scaleMode!.centerY + (preview.y - scaleMode!.centerY) * scaleMode!.previewScale : image.y
-              const displayWidth = preview
-                ? Math.max(MIN_IMAGE_WIDTH, preview.width * scaleMode!.previewScale)
-                : image.width
+              const scalePreview = scaleMode ? scaleMode.startItems[image.id] : null
+              const movePreview = moveMode ? moveMode.startItems[image.id] : null
+              const displayX = scalePreview
+                ? scaleMode!.centerX + (scalePreview.x - scaleMode!.centerX) * scaleMode!.previewScale
+                : movePreview
+                  ? movePreview.x + moveMode!.offsetX
+                  : image.x
+              const displayY = scalePreview
+                ? scaleMode!.centerY + (scalePreview.y - scaleMode!.centerY) * scaleMode!.previewScale
+                : movePreview
+                  ? movePreview.y + moveMode!.offsetY
+                  : image.y
+              const displayWidth = scalePreview ? Math.max(MIN_IMAGE_WIDTH, scalePreview.width * scaleMode!.previewScale) : image.width
 
               return (
             <figure
