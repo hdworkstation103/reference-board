@@ -159,6 +159,70 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && selectedIds.length > 1) {
+        event.preventDefault()
+
+        setImages((current) => {
+          const selected = current.filter((item) => selectedIds.includes(item.id))
+          if (selected.length < 2) {
+            return current
+          }
+
+          if (event.key === 'ArrowUp') {
+            const topY = Math.min(...selected.map((item) => item.y))
+            return current.map((item) =>
+              selectedIds.includes(item.id)
+                ? {
+                    ...item,
+                    y: topY,
+                  }
+                : item,
+            )
+          }
+
+          if (event.key === 'ArrowDown') {
+            const bottomY = Math.max(...selected.map((item) => item.y + getItemHeight(item)))
+            return current.map((item) => {
+              if (!selectedIds.includes(item.id)) {
+                return item
+              }
+
+              return {
+                ...item,
+                y: bottomY - getItemHeight(item),
+              }
+            })
+          }
+
+          if (event.key === 'ArrowLeft') {
+            const leftX = Math.min(...selected.map((item) => item.x))
+            return current.map((item) =>
+              selectedIds.includes(item.id)
+                ? {
+                    ...item,
+                    x: leftX,
+                  }
+                : item,
+            )
+          }
+
+          if (event.key === 'ArrowRight') {
+            const rightX = Math.max(...selected.map((item) => item.x + item.width))
+            return current.map((item) =>
+              selectedIds.includes(item.id)
+                ? {
+                    ...item,
+                    x: rightX - item.width,
+                  }
+                : item,
+            )
+          }
+
+          return current
+        })
+        return
+      }
+
       if ((event.key === 'x' || event.key === 'X') && selectedId !== null) {
         const nextSelectedIds = selectedIds.filter((id) => id !== selectedId)
 
