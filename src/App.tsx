@@ -85,6 +85,15 @@ type GroupResizeState = {
 }
 
 type InteractionState = DragState | ResizeState | GroupMoveState | GroupResizeState
+type ScaleModeState = {
+  ids: number[]
+  centerX: number
+  centerY: number
+  startDistance: number
+  previewScale: number
+  minScale: number
+  startItems: Record<number, { x: number; y: number; width: number }>
+}
 
 type PanState = {
   startClientX: number
@@ -157,6 +166,7 @@ function App() {
   const [images, setImages] = useState<BoardImage[]>([])
   const [darkMode, setDarkMode] = useState(false)
   const [interaction, setInteraction] = useState<InteractionState | null>(null)
+  const [scaleMode, setScaleMode] = useState<ScaleModeState | null>(null)
   const [pan, setPan] = useState<PanState | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
@@ -177,6 +187,7 @@ function App() {
   const groupFadeTimeoutRef = useRef<number | null>(null)
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({})
   const pendingVideoSeekRef = useRef<Record<number, number>>({})
+  const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
   const persistentGroupViews = useMemo(
@@ -233,6 +244,34 @@ function App() {
       })
     }
   }, [images])
+
+  const applyScaleMode = () => {
+    if (!scaleMode) {
+      return
+    }
+
+    setImages((current) =>
+      current.map((item) => {
+        if (!scaleMode.ids.includes(item.id)) {
+          return item
+        }
+
+        const start = scaleMode.startItems[item.id]
+        if (!start) {
+          return item
+        }
+
+        return {
+          ...item,
+          x: scaleMode.centerX + (start.x - scaleMode.centerX) * scaleMode.previewScale,
+          y: scaleMode.centerY + (start.y - scaleMode.centerY) * scaleMode.previewScale,
+          width: Math.max(MIN_IMAGE_WIDTH, start.width * scaleMode.previewScale),
+        }
+      }),
+    )
+
+    setScaleMode(null)
+  }
 
   useEffect(() => {
     if (seekPanelId !== null && !images.some((item) => item.id === seekPanelId)) {
@@ -337,6 +376,66 @@ function App() {
                 }
               : item,
           )
+        })
+        return
+      }
+
+      if (event.key === 'Escape' && scaleMode) {
+        event.preventDefault()
+        setScaleMode(null)
+        return
+      }
+
+      if ((event.key === 's' || event.key === 'S') && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault()
+
+        if (scaleMode) {
+          setScaleMode(null)
+          return
+        }
+
+        const activeIds = selectedIds.length > 0 ? selectedIds : selectedId !== null ? [selectedId] : []
+        if (activeIds.length === 0) {
+          return
+        }
+
+        const selected = images.filter((item) => activeIds.includes(item.id))
+        if (selected.length === 0) {
+          return
+        }
+
+        const startItems: Record<number, { x: number; y: number; width: number }> = {}
+        let minScale = Number.POSITIVE_INFINITY
+        for (const item of selected) {
+          startItems[item.id] = { x: item.x, y: item.y, width: item.width }
+          minScale = Math.min(minScale, MIN_IMAGE_WIDTH / item.width)
+        }
+
+        let centerX = 0
+        let centerY = 0
+        if (selected.length === 1) {
+          const item = selected[0]
+          centerX = item.x + item.width / 2
+          centerY = item.y + getItemHeight(item) / 2
+        } else {
+          const bounds = getGroupBounds(activeIds, images)
+          if (!bounds) {
+            return
+          }
+          centerX = bounds.left + bounds.width / 2
+          centerY = bounds.top + bounds.height / 2
+        }
+
+        const pointer = lastPointerRef.current
+        const distance = Math.max(1, Math.hypot(pointer.x - centerX, pointer.y - centerY))
+        setScaleMode({
+          ids: selected.map((item) => item.id),
+          centerX,
+          centerY,
+          startDistance: distance,
+          previewScale: 1,
+          minScale: Number.isFinite(minScale) ? minScale : 0.1,
+          startItems,
         })
         return
       }
@@ -496,7 +595,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [images, selectedId, selectedIds])
+  }, [images, scaleMode, selectedId, selectedIds])
 
   useEffect(() => {
     const wrapper = boardWrapRef.current
@@ -640,6 +739,13 @@ function App() {
   }
 
   const onPointerDown = (event: ReactPointerEvent, id: number) => {
+    if (event.button === 0 && scaleMode) {
+      event.preventDefault()
+      event.stopPropagation()
+      applyScaleMode()
+      return
+    }
+
     if (event.button !== 0) {
       return
     }
@@ -747,6 +853,13 @@ function App() {
   }
 
   const onResizePointerDown = (event: ReactPointerEvent, id: number) => {
+    if (event.button === 0 && scaleMode) {
+      event.preventDefault()
+      event.stopPropagation()
+      applyScaleMode()
+      return
+    }
+
     if (event.button !== 0) {
       return
     }
@@ -869,6 +982,13 @@ function App() {
   }
 
   const startGroupMove = (event: ReactPointerEvent, ids: number[]) => {
+    if (event.button === 0 && scaleMode) {
+      event.preventDefault()
+      event.stopPropagation()
+      applyScaleMode()
+      return
+    }
+
     if (event.button !== 0 || ids.length < 2) {
       return
     }
@@ -906,6 +1026,13 @@ function App() {
   }
 
   const startGroupResize = (event: ReactPointerEvent, ids: number[], bounds: GroupBounds) => {
+    if (event.button === 0 && scaleMode) {
+      event.preventDefault()
+      event.stopPropagation()
+      applyScaleMode()
+      return
+    }
+
     if (event.button !== 0 || ids.length < 2) {
       return
     }
@@ -965,15 +1092,35 @@ function App() {
   }
 
   const onPointerMove = (event: ReactPointerEvent) => {
+    const point = getBoardPointer(event)
+    if (!point) {
+      return
+    }
+    lastPointerRef.current = point
+
+    if (scaleMode) {
+      const nextDistance = Math.max(1, Math.hypot(point.x - scaleMode.centerX, point.y - scaleMode.centerY))
+      const rawScale = nextDistance / scaleMode.startDistance
+      const nextScale = Math.max(scaleMode.minScale, Math.min(rawScale, 40))
+      setScaleMode((current) => {
+        if (!current) {
+          return current
+        }
+        if (Math.abs(current.previewScale - nextScale) < 0.001) {
+          return current
+        }
+        return {
+          ...current,
+          previewScale: nextScale,
+        }
+      })
+      return
+    }
+
     const wrapper = boardWrapRef.current
     if (pan && wrapper) {
       wrapper.scrollLeft = pan.startScrollLeft - (event.clientX - pan.startClientX)
       wrapper.scrollTop = pan.startScrollTop - (event.clientY - pan.startClientY)
-      return
-    }
-
-    const point = getBoardPointer(event)
-    if (!point) {
       return
     }
 
@@ -1156,9 +1303,15 @@ function App() {
       </header>
 
       <section
-        className={`board-wrap ${pan ? 'panning' : ''}`}
+        className={`board-wrap ${pan ? 'panning' : ''} ${scaleMode ? 'scale-mode' : ''}`}
         ref={boardWrapRef}
         onPointerDown={(event) => {
+          if (event.button === 0 && scaleMode) {
+            event.preventDefault()
+            applyScaleMode()
+            return
+          }
+
           if (event.button !== 1) {
             return
           }
@@ -1202,6 +1355,12 @@ function App() {
             handleFiles(event.dataTransfer.files, point ?? undefined)
           }}
           onPointerDown={(event) => {
+            if (event.button === 0 && scaleMode) {
+              event.preventDefault()
+              applyScaleMode()
+              return
+            }
+
             if (event.target !== event.currentTarget || event.button !== 0) {
               return
             }
@@ -1228,12 +1387,21 @@ function App() {
           style={{ width: `${WORLD_SIZE}px`, height: `${WORLD_SIZE}px` }}
         >
           {images.map((image) => (
+            (() => {
+              const preview = scaleMode ? scaleMode.startItems[image.id] : null
+              const displayX = preview ? scaleMode!.centerX + (preview.x - scaleMode!.centerX) * scaleMode!.previewScale : image.x
+              const displayY = preview ? scaleMode!.centerY + (preview.y - scaleMode!.centerY) * scaleMode!.previewScale : image.y
+              const displayWidth = preview
+                ? Math.max(MIN_IMAGE_WIDTH, preview.width * scaleMode!.previewScale)
+                : image.width
+
+              return (
             <figure
               key={image.id}
               className={`board-image ${selectedSet.has(image.id) ? 'selected' : ''}`}
               style={{
-                transform: `translate(${image.x + WORLD_ORIGIN}px, ${image.y + WORLD_ORIGIN}px)`,
-                width: `${image.width}px`,
+                transform: `translate(${displayX + WORLD_ORIGIN}px, ${displayY + WORLD_ORIGIN}px)`,
+                width: `${displayWidth}px`,
                 zIndex: image.z,
               }}
               onPointerDown={(event) => onPointerDown(event, image.id)}
@@ -1430,6 +1598,8 @@ function App() {
                 </div>
               )}
             </figure>
+              )
+            })()
           ))}
 
           {persistentGroupViews.map((group) => (

@@ -68,6 +68,10 @@
   cursor: grabbing;
 }
 
+.board-wrap.scale-mode {
+  cursor: zoom-in;
+}
+
 .board {
   position: relative;
   background-color: #f8fafc;
