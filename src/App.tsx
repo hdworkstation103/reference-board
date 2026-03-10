@@ -145,6 +145,7 @@ const hasSameMembers = (a: number[], b: number[]) => {
 
 function App() {
   const [images, setImages] = useState<BoardImage[]>([])
+  const [darkMode, setDarkMode] = useState(false)
   const [interaction, setInteraction] = useState<InteractionState | null>(null)
   const [pan, setPan] = useState<PanState | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -188,6 +189,17 @@ function App() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem('pureref-lite-theme')
+    if (savedTheme === 'dark') {
+      setDarkMode(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem('pureref-lite-theme', darkMode ? 'dark' : 'light')
+  }, [darkMode])
 
   useEffect(() => {
     const imageIdSet = new Set(images.map((item) => item.id))
@@ -895,7 +907,7 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${darkMode ? 'dark' : ''}`}>
       <header className="toolbar">
         <label className="add-button" htmlFor="image-picker">
           Add Images
@@ -915,6 +927,9 @@ function App() {
         </button>
         <button type="button" className="danger" onClick={clearBoard}>
           Clear Board
+        </button>
+        <button type="button" onClick={() => setDarkMode((current) => !current)}>
+          {darkMode ? 'Light Mode' : 'Dark Mode'}
         </button>
         <span className="meta">{images.length} image(s)</span>
       </header>
