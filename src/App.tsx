@@ -38,6 +38,11 @@ type GroupOverlayState = {
   active: boolean
 }
 
+type PersistedGroup = {
+  id: number
+  memberIds: number[]
+}
+
 type DragState = {
   kind: 'move'
   id: number
@@ -129,22 +134,49 @@ const getGroupBounds = (ids: number[], images: BoardImage[]): GroupBounds | null
   }
 }
 
+const hasSameMembers = (a: number[], b: number[]) => {
+  if (a.length !== b.length) {
+    return false
+  }
+
+  const bSet = new Set(b)
+  return a.every((id) => bSet.has(id))
+}
+
 function App() {
   const [images, setImages] = useState<BoardImage[]>([])
   const [interaction, setInteraction] = useState<InteractionState | null>(null)
   const [pan, setPan] = useState<PanState | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [groups, setGroups] = useState<PersistedGroup[]>([])
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(null)
   const boardRef = useRef<HTMLDivElement | null>(null)
   const boardWrapRef = useRef<HTMLDivElement | null>(null)
   const nextIdRef = useRef(1)
+  const nextGroupIdRef = useRef(1)
   const nextZRef = useRef(1)
   const objectUrlsRef = useRef<string[]>([])
   const groupFadeTimeoutRef = useRef<number | null>(null)
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
+  const persistentGroupViews = useMemo(
+    () =>
+      groups
+        .map((group) => {
+          const bounds = getGroupBounds(group.memberIds, images)
+          return bounds
+            ? {
+                id: group.id,
+                memberIds: group.memberIds,
+                bounds,
+              }
+            : null
+        })
+        .filter((value): value is { id: number; memberIds: number[]; bounds: GroupBounds } => value !== null),
+    [groups, images],
+  )
 
   useEffect(() => {
     return () => {
@@ -158,8 +190,67 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const imageIdSet = new Set(images.map((item) => item.id))
+    setGroups((current) => {
+      let changed = false
+      const next = current
+        .map((group) => {
+          const memberIds = group.memberIds.filter((id) => imageIdSet.has(id))
+          if (memberIds.length !== group.memberIds.length) {
+            changed = true
+          }
+          return { ...group, memberIds }
+        })
+        .filter((group) => {
+          if (group.memberIds.length > 1) {
+            return true
+          }
+          changed = true
+          return false
+        })
+
+      return changed ? next : current
+    })
+  }, [images])
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey && selectedIds.length > 1) {
+      if (event.ctrlKey && event.key.toLowerCase() === 'g' && selectedIds.length > 1) {
+        event.preventDefault()
+
+        const memberIds = selectedIds.filter((id) => images.some((item) => item.id === id))
+        if (memberIds.length < 2) {
+          return
+        }
+
+        setGroups((current) => {
+          const selectedSet = new Set(memberIds)
+          const nextGroups = current.filter((group) => !group.memberIds.every((id) => selectedSet.has(id)))
+
+          const alreadyExists = nextGroups.some((group) => hasSameMembers(group.memberIds, memberIds))
+          if (alreadyExists) {
+            return nextGroups
+          }
+
+          return [
+            ...nextGroups,
+            {
+              id: nextGroupIdRef.current++,
+              memberIds,
+            },
+          ]
+        })
+        return
+      }
+
+      const isLayoutShortcut = event.key.toLowerCase() === 'l'
+      const isAlignShortcut =
+        event.key === 'ArrowUp' ||
+        event.key === 'ArrowDown' ||
+        event.key === 'ArrowLeft' ||
+        event.key === 'ArrowRight'
+
+      if (event.ctrlKey && selectedIds.length > 1 && (isAlignShortcut || isLayoutShortcut)) {
         event.preventDefault()
 
         setImages((current) => {
@@ -218,29 +309,77 @@ function App() {
             )
           }
 
+          if (isLayoutShortcut) {
+            const ordered = [...selected].sort((a, b) => a.y - b.y || a.x - b.x)
+            const cols = Math.ceil(Math.sqrt(ordered.length))
+            const gap = 24
+            const anchorX = Math.min(...ordered.map((item) => item.x))
+            const anchorY = Math.min(...ordered.map((item) => item.y))
+            const positions = new Map<number, { x: number; y: number }>()
+
+            let currentX = anchorX
+            let currentY = anchorY
+            let rowHeight = 0
+            let col = 0
+
+            for (const item of ordered) {
+              if (col >= cols) {
+                currentY += rowHeight + gap
+                currentX = anchorX
+                rowHeight = 0
+                col = 0
+              }
+
+              positions.set(item.id, { x: currentX, y: currentY })
+              currentX += item.width + gap
+              rowHeight = Math.max(rowHeight, getItemHeight(item))
+              col += 1
+            }
+
+            return current.map((item) => {
+              if (!selectedIds.includes(item.id)) {
+                return item
+              }
+
+              const nextPosition = positions.get(item.id)
+              if (!nextPosition) {
+                return item
+              }
+
+              return {
+                ...item,
+                x: nextPosition.x,
+                y: nextPosition.y,
+              }
+            })
+          }
+
           return current
         })
         return
       }
 
-      if ((event.key === 'x' || event.key === 'X') && selectedId !== null) {
-        const nextSelectedIds = selectedIds.filter((id) => id !== selectedId)
+      if (event.key === 'x' || event.key === 'X') {
+        const deleteIds = selectedIds.length > 1 ? selectedIds : selectedId !== null ? [selectedId] : []
+        if (deleteIds.length === 0) {
+          return
+        }
 
-        setImages((current) => current.filter((item) => item.id !== selectedId))
+        setImages((current) => current.filter((item) => !deleteIds.includes(item.id)))
         setInteraction((current) => {
           if (!current) {
             return current
           }
 
           if (current.kind === 'move' || current.kind === 'resize') {
-            return current.id === selectedId ? null : current
+            return deleteIds.includes(current.id) ? null : current
           }
 
-          return current.ids.includes(selectedId) ? null : current
+          return current.ids.some((id) => deleteIds.includes(id)) ? null : current
         })
 
-        setSelectedIds(nextSelectedIds)
-        setSelectedId(nextSelectedIds.length > 0 ? nextSelectedIds[nextSelectedIds.length - 1] : null)
+        setSelectedIds([])
+        setSelectedId(null)
       }
     }
 
@@ -248,7 +387,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [selectedId, selectedIds])
+  }, [images, selectedId, selectedIds])
 
   useEffect(() => {
     const wrapper = boardWrapRef.current
@@ -265,7 +404,8 @@ function App() {
 
   useEffect(() => {
     const activeGroupIds = selectedIds.filter((id) => images.some((item) => item.id === id))
-    if (activeGroupIds.length > 1) {
+    const selectionAlreadyPersisted = groups.some((group) => hasSameMembers(group.memberIds, activeGroupIds))
+    if (activeGroupIds.length > 1 && !selectionAlreadyPersisted) {
       const bounds = getGroupBounds(activeGroupIds, images)
       if (!bounds) {
         return
@@ -296,7 +436,7 @@ function App() {
 
       return { ...current, active: false }
     })
-  }, [selectedIds, images])
+  }, [selectedIds, images, groups])
 
   const getBoardPointer = (event: ReactPointerEvent) => {
     return getBoardPointFromClient(event.clientX, event.clientY)
@@ -325,12 +465,20 @@ function App() {
       return
     }
 
+    const prepared = files.map((file) => {
+      const src = URL.createObjectURL(file)
+      objectUrlsRef.current.push(src)
+      return {
+        id: nextIdRef.current++,
+        src,
+        name: file.name,
+        z: nextZRef.current++,
+      }
+    })
+
     setImages((current) => {
       const cols = 5
-      const nextImages = files.map((file, i) => {
-        const src = URL.createObjectURL(file)
-        objectUrlsRef.current.push(src)
-        const id = nextIdRef.current++
+      const nextImages = prepared.map((item, i) => {
         const row = Math.floor(i / cols)
         const col = i % cols
         const x = anchor
@@ -339,19 +487,25 @@ function App() {
         const y = anchor ? anchor.y + row * 220 : START_Y + Math.floor((current.length + i) / cols) * 220
 
         return {
-          id,
-          src,
-          name: file.name,
+          id: item.id,
+          src: item.src,
+          name: item.name,
           x,
           y,
           width: IMAGE_WIDTH,
           aspect: 1,
-          z: nextZRef.current++,
+          z: item.z,
         }
       })
 
       return [...current, ...nextImages]
     })
+
+    if (prepared.length > 1) {
+      const newIds = prepared.map((item) => item.id)
+      setSelectedIds(newIds)
+      setSelectedId(newIds[newIds.length - 1])
+    }
   }
 
   const bringToFront = (id: number) => {
@@ -482,8 +636,8 @@ function App() {
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   }
 
-  const onGroupMovePointerDown = (event: ReactPointerEvent) => {
-    if (event.button !== 0 || !groupOverlay || !groupOverlay.active || selectedIds.length < 2) {
+  const startGroupMove = (event: ReactPointerEvent, ids: number[]) => {
+    if (event.button !== 0 || ids.length < 2) {
       return
     }
 
@@ -494,7 +648,11 @@ function App() {
       return
     }
 
-    const activeIds = selectedIds.filter((id) => images.some((item) => item.id === id))
+    const activeIds = ids.filter((id) => images.some((item) => item.id === id))
+    if (activeIds.length < 2) {
+      return
+    }
+
     const startPositions: Record<number, { x: number; y: number }> = {}
     for (const item of images) {
       if (activeIds.includes(item.id)) {
@@ -509,12 +667,14 @@ function App() {
       startPointerY: point.y,
       startPositions,
     })
+    setSelectedIds(activeIds)
+    setSelectedId(activeIds[activeIds.length - 1])
 
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   }
 
-  const onGroupResizePointerDown = (event: ReactPointerEvent) => {
-    if (event.button !== 0 || !groupOverlay || !groupOverlay.active || selectedIds.length < 2) {
+  const startGroupResize = (event: ReactPointerEvent, ids: number[], bounds: GroupBounds) => {
+    if (event.button !== 0 || ids.length < 2) {
       return
     }
 
@@ -525,7 +685,11 @@ function App() {
       return
     }
 
-    const activeIds = selectedIds.filter((id) => images.some((item) => item.id === id))
+    const activeIds = ids.filter((id) => images.some((item) => item.id === id))
+    if (activeIds.length < 2) {
+      return
+    }
+
     const startItems: Record<number, { x: number; y: number; width: number }> = {}
     let minScale = Number.POSITIVE_INFINITY
 
@@ -542,12 +706,30 @@ function App() {
       kind: 'resize-group',
       ids: activeIds,
       startPointerX: point.x,
-      startBounds: groupOverlay.bounds,
+      startBounds: bounds,
       startItems,
       minScale: Number.isFinite(minScale) ? minScale : 0.1,
     })
+    setSelectedIds(activeIds)
+    setSelectedId(activeIds[activeIds.length - 1])
 
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  }
+
+  const onGroupMovePointerDown = (event: ReactPointerEvent) => {
+    if (!groupOverlay || !groupOverlay.active || selectedIds.length < 2) {
+      return
+    }
+
+    startGroupMove(event, selectedIds)
+  }
+
+  const onGroupResizePointerDown = (event: ReactPointerEvent) => {
+    if (!groupOverlay || !groupOverlay.active || selectedIds.length < 2) {
+      return
+    }
+
+    startGroupResize(event, selectedIds, groupOverlay.bounds)
   }
 
   const onPointerMove = (event: ReactPointerEvent) => {
@@ -696,6 +878,7 @@ function App() {
     setSelectedIds([])
     setInteraction(null)
     setGroupOverlay(null)
+    setGroups([])
   }
 
   const centerView = () => {
@@ -856,6 +1039,34 @@ function App() {
                 aria-label={`Resize ${image.name}`}
               />
             </figure>
+          ))}
+
+          {persistentGroupViews.map((group) => (
+            <div
+              key={group.id}
+              className="group-container persistent"
+              style={{
+                left: `${group.bounds.left + WORLD_ORIGIN}px`,
+                top: `${group.bounds.top + WORLD_ORIGIN}px`,
+                width: `${group.bounds.width}px`,
+                height: `${group.bounds.height}px`,
+              }}
+            >
+              <button
+                type="button"
+                className="group-move-handle persistent-group-handle"
+                onPointerDown={(event) => startGroupMove(event, group.memberIds)}
+                aria-label={`Move persistent group ${group.id}`}
+              >
+                Group ({group.memberIds.length})
+              </button>
+              <button
+                type="button"
+                className="group-resize-handle persistent-group-handle"
+                onPointerDown={(event) => startGroupResize(event, group.memberIds, group.bounds)}
+                aria-label={`Resize persistent group ${group.id}`}
+              />
+            </div>
           ))}
 
           {groupOverlay && (
