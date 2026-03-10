@@ -13,6 +13,9 @@ type BoardImage = {
   src: string
   name: string
   mediaKind: 'image' | 'video'
+  isGif: boolean
+  paused: boolean
+  gifFreezeSrc?: string
   x: number
   y: number
   width: number
@@ -20,7 +23,11 @@ type BoardImage = {
   z: number
 }
 
-type PreparedMedia = Pick<BoardImage, 'id' | 'src' | 'name' | 'mediaKind' | 'z'>
+type PreparedMedia = Pick<BoardImage, 'id' | 'src' | 'name' | 'mediaKind' | 'isGif' | 'paused' | 'z'>
+type MediaTimeline = {
+  current: number
+  duration: number
+}
 
 type ItemRect = {
   left: number
@@ -153,6 +160,10 @@ function App() {
   const [pan, setPan] = useState<PanState | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [seekPanelId, setSeekPanelId] = useState<number | null>(null)
+  const [videoTimelines, setVideoTimelines] = useState<Record<number, MediaTimeline>>({})
+  const [gifFrameCounts, setGifFrameCounts] = useState<Record<number, number>>({})
+  const [gifSeekFrames, setGifSeekFrames] = useState<Record<number, number>>({})
   const [groups, setGroups] = useState<PersistedGroup[]>([])
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(null)
@@ -162,7 +173,10 @@ function App() {
   const nextGroupIdRef = useRef(1)
   const nextZRef = useRef(1)
   const objectUrlsRef = useRef<string[]>([])
+  const gifDecoderCacheRef = useRef<Record<number, { decoder: any; frameCount: number }>>({})
   const groupFadeTimeoutRef = useRef<number | null>(null)
+  const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({})
+  const pendingVideoSeekRef = useRef<Record<number, number>>({})
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
   const persistentGroupViews = useMemo(
@@ -187,11 +201,44 @@ function App() {
       for (const src of objectUrlsRef.current) {
         URL.revokeObjectURL(src)
       }
+      for (const entry of Object.values(gifDecoderCacheRef.current)) {
+        if (entry?.decoder && typeof entry.decoder.close === 'function') {
+          entry.decoder.close()
+        }
+      }
       if (groupFadeTimeoutRef.current !== null) {
         window.clearTimeout(groupFadeTimeoutRef.current)
       }
     }
   }, [])
+
+  useEffect(() => {
+    for (const item of images) {
+      if (item.mediaKind !== 'video') {
+        continue
+      }
+
+      const video = videoRefs.current[item.id]
+      if (!video) {
+        continue
+      }
+
+      if (item.paused) {
+        video.pause()
+        continue
+      }
+
+      void video.play().catch(() => {
+        // Keep state as source of truth; browser may block play in rare cases.
+      })
+    }
+  }, [images])
+
+  useEffect(() => {
+    if (seekPanelId !== null && !images.some((item) => item.id === seekPanelId)) {
+      setSeekPanelId(null)
+    }
+  }, [images, seekPanelId])
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem('pureref-lite-theme')
@@ -264,6 +311,53 @@ function App() {
         event.key === 'ArrowDown' ||
         event.key === 'ArrowLeft' ||
         event.key === 'ArrowRight'
+
+      if (event.key === ' ' || event.code === 'Space') {
+        const activeIds =
+          selectedIds.length > 0 ? selectedIds : selectedId !== null ? [selectedId] : []
+        if (activeIds.length === 0) {
+          return
+        }
+
+        event.preventDefault()
+        setImages((current) => {
+          const selectedMedia = current.filter(
+            (item) => activeIds.includes(item.id) && (item.mediaKind === 'video' || item.isGif),
+          )
+          if (selectedMedia.length === 0) {
+            return current
+          }
+
+          const shouldPause = selectedMedia.some((item) => !item.paused)
+          return current.map((item) =>
+            activeIds.includes(item.id) && (item.mediaKind === 'video' || item.isGif)
+              ? {
+                  ...item,
+                  paused: shouldPause,
+                }
+              : item,
+          )
+        })
+        return
+      }
+
+      if (event.key === '`' || event.code === 'Backquote') {
+        const activeId = selectedId
+        if (activeId === null) {
+          return
+        }
+
+        const selectedMedia = images.find((item) => item.id === activeId)
+        if (!selectedMedia || (selectedMedia.mediaKind !== 'video' && !selectedMedia.isGif)) {
+          return
+        }
+
+        event.preventDefault()
+        if (selectedMedia.isGif) {
+          void ensureGifDecoder(selectedMedia)
+        }
+        setSeekPanelId((current) => (current === activeId ? null : activeId))
+      }
 
       if (event.ctrlKey && selectedIds.length > 1 && (isAlignShortcut || isLayoutShortcut)) {
         event.preventDefault()
@@ -485,11 +579,14 @@ function App() {
     const prepared: PreparedMedia[] = files.map((file) => {
       const src = URL.createObjectURL(file)
       objectUrlsRef.current.push(src)
+      const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')
       return {
         id: nextIdRef.current++,
         src,
         name: file.name,
         mediaKind: file.type.startsWith('video/') ? 'video' : 'image',
+        isGif,
+        paused: false,
         z: nextZRef.current++,
       }
     })
@@ -509,6 +606,8 @@ function App() {
           src: item.src,
           name: item.name,
           mediaKind: item.mediaKind,
+          isGif: item.isGif,
+          paused: item.paused,
           x,
           y,
           width: IMAGE_WIDTH,
@@ -558,6 +657,11 @@ function App() {
     if (event.altKey) {
       const duplicateId = nextIdRef.current++
       const duplicateZ = nextZRef.current++
+      const sourceVideo = targetImage.mediaKind === 'video' ? videoRefs.current[id] : null
+      const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null
+      const sourceVideoDuration =
+        sourceVideo && Number.isFinite(sourceVideo.duration) ? sourceVideo.duration : videoTimelines[id]?.duration ?? 0
+      const sourceGifFrame = targetImage.isGif ? gifSeekFrames[id] ?? 0 : 0
 
       setImages((current) => {
         const source = current.find((item) => item.id === id)
@@ -574,6 +678,24 @@ function App() {
           },
         ]
       })
+
+      if (sourceVideoTime !== null) {
+        pendingVideoSeekRef.current[duplicateId] = sourceVideoTime
+        setVideoTimelines((current) => ({
+          ...current,
+          [duplicateId]: {
+            current: sourceVideoTime,
+            duration: sourceVideoDuration,
+          },
+        }))
+      }
+
+      if (targetImage.isGif) {
+        setGifSeekFrames((current) => ({
+          ...current,
+          [duplicateId]: sourceGifFrame,
+        }))
+      }
 
       setInteraction({
         kind: 'move',
@@ -653,6 +775,97 @@ function App() {
     })
 
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  }
+
+  const ensureGifDecoder = async (item: BoardImage) => {
+    const cached = gifDecoderCacheRef.current[item.id]
+    if (cached) {
+      return cached
+    }
+
+    const DecoderCtor = (window as any).ImageDecoder
+    if (!DecoderCtor) {
+      return null
+    }
+
+    try {
+      const response = await fetch(item.src)
+      const blob = await response.blob()
+      const decoder = new DecoderCtor({ data: blob, type: 'image/gif' })
+      if (decoder.tracks?.ready) {
+        await decoder.tracks.ready
+      }
+
+      const frameCount = decoder.tracks?.selectedTrack?.frameCount ?? decoder.frameCount ?? 1
+      const result = { decoder, frameCount: Math.max(1, frameCount) }
+      gifDecoderCacheRef.current[item.id] = result
+      setGifFrameCounts((current) => ({ ...current, [item.id]: result.frameCount }))
+      return result
+    } catch {
+      return null
+    }
+  }
+
+  const decodeGifFrameToDataUrl = async (item: BoardImage, frameIndex: number) => {
+    const decoderInfo = await ensureGifDecoder(item)
+    if (!decoderInfo) {
+      return null
+    }
+
+    try {
+      const clampedIndex = Math.max(0, Math.min(frameIndex, decoderInfo.frameCount - 1))
+      const result = await decoderInfo.decoder.decode({ frameIndex: clampedIndex })
+      const frame = result.image
+
+      const width = frame.displayWidth || frame.codedWidth
+      const height = frame.displayHeight || frame.codedHeight
+      if (!width || !height) {
+        if (typeof frame.close === 'function') {
+          frame.close()
+        }
+        return null
+      }
+
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        if (typeof frame.close === 'function') {
+          frame.close()
+        }
+        return null
+      }
+
+      ctx.drawImage(frame as CanvasImageSource, 0, 0)
+      if (typeof frame.close === 'function') {
+        frame.close()
+      }
+
+      return canvas.toDataURL('image/png')
+    } catch {
+      return null
+    }
+  }
+
+  const onGifSeek = async (item: BoardImage, nextFrame: number) => {
+    setGifSeekFrames((current) => ({ ...current, [item.id]: nextFrame }))
+    const frameDataUrl = await decodeGifFrameToDataUrl(item, nextFrame)
+    if (!frameDataUrl) {
+      return
+    }
+
+    setImages((current) =>
+      current.map((candidate) =>
+        candidate.id === item.id
+          ? {
+              ...candidate,
+              paused: true,
+              gifFreezeSrc: frameDataUrl,
+            }
+          : candidate,
+      ),
+    )
   }
 
   const startGroupMove = (event: ReactPointerEvent, ids: number[]) => {
@@ -898,6 +1111,7 @@ function App() {
     setInteraction(null)
     setGroupOverlay(null)
     setGroups([])
+    setSeekPanelId(null)
   }
 
   const centerView = () => {
@@ -1033,13 +1247,32 @@ function App() {
                   playsInline
                   preload="metadata"
                   draggable={false}
+                  ref={(element) => {
+                    videoRefs.current[image.id] = element
+                  }}
                   onLoadedMetadata={(event) => {
                     const videoEl = event.currentTarget
                     if (!videoEl.videoWidth || !videoEl.videoHeight) {
                       return
                     }
 
+                    const pendingSeekTime = pendingVideoSeekRef.current[image.id]
+                    if (pendingSeekTime !== undefined) {
+                      const safeDuration = Number.isFinite(videoEl.duration) ? videoEl.duration : pendingSeekTime
+                      videoEl.currentTime = Math.max(0, Math.min(pendingSeekTime, safeDuration))
+                      delete pendingVideoSeekRef.current[image.id]
+                    }
+
                     const nextAspect = videoEl.videoHeight / videoEl.videoWidth
+                    const nextDuration = Number.isFinite(videoEl.duration) ? videoEl.duration : 0
+
+                    setVideoTimelines((current) => ({
+                      ...current,
+                      [image.id]: {
+                        current: videoEl.currentTime,
+                        duration: nextDuration,
+                      },
+                    }))
                     setImages((current) =>
                       current.map((item) => {
                         if (item.id !== image.id) {
@@ -1057,10 +1290,33 @@ function App() {
                       }),
                     )
                   }}
+                  onTimeUpdate={(event) => {
+                    const videoEl = event.currentTarget
+                    setVideoTimelines((current) => {
+                      const previous = current[image.id]
+                      const nextValue = {
+                        current: videoEl.currentTime,
+                        duration: Number.isFinite(videoEl.duration) ? videoEl.duration : previous?.duration ?? 0,
+                      }
+
+                      if (
+                        previous &&
+                        Math.abs(previous.current - nextValue.current) < 0.02 &&
+                        Math.abs(previous.duration - nextValue.duration) < 0.02
+                      ) {
+                        return current
+                      }
+
+                      return {
+                        ...current,
+                        [image.id]: nextValue,
+                      }
+                    })
+                  }}
                 />
               ) : (
                 <img
-                  src={image.src}
+                  src={image.isGif && image.paused && image.gifFreezeSrc ? image.gifFreezeSrc : image.src}
                   alt={image.name}
                   draggable={false}
                   onLoad={(event) => {
@@ -1076,14 +1332,37 @@ function App() {
                           return item
                         }
 
-                        if (Math.abs(item.aspect - nextAspect) < 0.001) {
-                          return item
+                        let didChange = false
+                        let nextItem = item
+
+                        if (Math.abs(item.aspect - nextAspect) >= 0.001) {
+                          nextItem = {
+                            ...nextItem,
+                            aspect: nextAspect,
+                          }
+                          didChange = true
                         }
 
-                        return {
-                          ...item,
-                          aspect: nextAspect,
+                        if (item.isGif && !item.gifFreezeSrc) {
+                          try {
+                            const canvas = document.createElement('canvas')
+                            canvas.width = imgEl.naturalWidth
+                            canvas.height = imgEl.naturalHeight
+                            const ctx = canvas.getContext('2d')
+                            if (ctx) {
+                              ctx.drawImage(imgEl, 0, 0)
+                              nextItem = {
+                                ...nextItem,
+                                gifFreezeSrc: canvas.toDataURL('image/png'),
+                              }
+                              didChange = true
+                            }
+                          } catch {
+                            // Ignore draw failures; GIF can still play normally.
+                          }
                         }
+
+                        return didChange ? nextItem : item
                       }),
                     )
                   }}
@@ -1096,6 +1375,60 @@ function App() {
                 onPointerDown={(event) => onResizePointerDown(event, image.id)}
                 aria-label={`Resize ${image.name}`}
               />
+              {(seekPanelId === image.id && (image.mediaKind === 'video' || image.isGif)) && (
+                <div
+                  className="seek-panel open"
+                  onPointerDown={(event) => {
+                    event.stopPropagation()
+                  }}
+                >
+                  {image.mediaKind === 'video' ? (
+                    <>
+                      <div className="seek-panel-title">Video Seek</div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max(videoTimelines[image.id]?.duration ?? 0, 0.01)}
+                        step={0.01}
+                        value={Math.min(
+                          videoTimelines[image.id]?.current ?? 0,
+                          Math.max(videoTimelines[image.id]?.duration ?? 0, 0.01),
+                        )}
+                        onChange={(event) => {
+                          const nextTime = Number(event.currentTarget.value)
+                          const video = videoRefs.current[image.id]
+                          if (video) {
+                            video.currentTime = nextTime
+                          }
+
+                          setVideoTimelines((current) => ({
+                            ...current,
+                            [image.id]: {
+                              current: nextTime,
+                              duration: current[image.id]?.duration ?? video?.duration ?? 0,
+                            },
+                          }))
+                        }}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <div className="seek-panel-title">GIF Seek</div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max((gifFrameCounts[image.id] ?? 1) - 1, 0)}
+                        step={1}
+                        value={Math.min(gifSeekFrames[image.id] ?? 0, Math.max((gifFrameCounts[image.id] ?? 1) - 1, 0))}
+                        onChange={(event) => {
+                          const nextFrame = Number(event.currentTarget.value)
+                          void onGifSeek(image, nextFrame)
+                        }}
+                      />
+                    </>
+                  )}
+                </div>
+              )}
             </figure>
           ))}
 
