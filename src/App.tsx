@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import './App.css'
 
 type BoardImage = {
@@ -9,6 +9,25 @@ type BoardImage = {
   y: number
   width: number
   z: number
+}
+
+type ItemRect = {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+type GroupBounds = {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+type GroupOverlayState = {
+  bounds: GroupBounds
+  active: boolean
 }
 
 type DragState = {
@@ -25,12 +44,37 @@ type ResizeState = {
   startPointerX: number
 }
 
-type InteractionState = DragState | ResizeState
+type GroupMoveState = {
+  kind: 'move-group'
+  ids: number[]
+  startPointerX: number
+  startPointerY: number
+  startPositions: Record<number, { x: number; y: number }>
+}
+
+type GroupResizeState = {
+  kind: 'resize-group'
+  ids: number[]
+  startPointerX: number
+  startBounds: GroupBounds
+  startItems: Record<number, { x: number; y: number; width: number }>
+  minScale: number
+}
+
+type InteractionState = DragState | ResizeState | GroupMoveState | GroupResizeState
+
 type PanState = {
   startClientX: number
   startClientY: number
   startScrollLeft: number
   startScrollTop: number
+}
+
+type MarqueeState = {
+  startX: number
+  startY: number
+  currentX: number
+  currentY: number
 }
 
 const MIN_BOARD_WIDTH = 2400
@@ -41,22 +85,66 @@ const START_Y = 100
 const IMAGE_WIDTH = 280
 const MIN_IMAGE_WIDTH = 80
 
+const getItemRect = (item: BoardImage): ItemRect => ({
+  left: item.x,
+  top: item.y,
+  right: item.x + item.width,
+  // Approximate height from width; sufficient for coarse selection/group bounds.
+  bottom: item.y + item.width + 40,
+})
+
+const getGroupBounds = (ids: number[], images: BoardImage[]): GroupBounds | null => {
+  const selected = images.filter((item) => ids.includes(item.id))
+  if (selected.length === 0) {
+    return null
+  }
+
+  let left = Number.POSITIVE_INFINITY
+  let top = Number.POSITIVE_INFINITY
+  let right = Number.NEGATIVE_INFINITY
+  let bottom = Number.NEGATIVE_INFINITY
+
+  for (const item of selected) {
+    const rect = getItemRect(item)
+    left = Math.min(left, rect.left)
+    top = Math.min(top, rect.top)
+    right = Math.max(right, rect.right)
+    bottom = Math.max(bottom, rect.bottom)
+  }
+
+  return {
+    left,
+    top,
+    width: right - left,
+    height: bottom - top,
+  }
+}
+
 function App() {
   const [images, setImages] = useState<BoardImage[]>([])
   const [interaction, setInteraction] = useState<InteractionState | null>(null)
   const [pan, setPan] = useState<PanState | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [marquee, setMarquee] = useState<MarqueeState | null>(null)
+  const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(null)
   const [boardSize, setBoardSize] = useState({ width: MIN_BOARD_WIDTH, height: MIN_BOARD_HEIGHT })
   const boardRef = useRef<HTMLDivElement | null>(null)
   const boardWrapRef = useRef<HTMLDivElement | null>(null)
   const nextIdRef = useRef(1)
   const nextZRef = useRef(1)
   const objectUrlsRef = useRef<string[]>([])
+  const groupFadeTimeoutRef = useRef<number | null>(null)
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
 
   useEffect(() => {
     return () => {
       for (const src of objectUrlsRef.current) {
         URL.revokeObjectURL(src)
+      }
+      if (groupFadeTimeoutRef.current !== null) {
+        window.clearTimeout(groupFadeTimeoutRef.current)
       }
     }
   }, [])
@@ -64,9 +152,23 @@ function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.key === 'x' || event.key === 'X') && selectedId !== null) {
+        const nextSelectedIds = selectedIds.filter((id) => id !== selectedId)
+
         setImages((current) => current.filter((item) => item.id !== selectedId))
-        setInteraction((current) => (current && current.id === selectedId ? null : current))
-        setSelectedId(null)
+        setInteraction((current) => {
+          if (!current) {
+            return current
+          }
+
+          if (current.kind === 'move' || current.kind === 'resize') {
+            return current.id === selectedId ? null : current
+          }
+
+          return current.ids.includes(selectedId) ? null : current
+        })
+
+        setSelectedIds(nextSelectedIds)
+        setSelectedId(nextSelectedIds.length > 0 ? nextSelectedIds[nextSelectedIds.length - 1] : null)
       }
     }
 
@@ -74,7 +176,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [selectedId])
+  }, [selectedId, selectedIds])
 
   useEffect(() => {
     const wrapper = boardWrapRef.current
@@ -84,9 +186,9 @@ function App() {
     let maxX = 0
     let maxY = 0
     for (const image of images) {
-      maxX = Math.max(maxX, image.x + image.width)
-      // Height is approximate from width to avoid storing image aspect metadata.
-      maxY = Math.max(maxY, image.y + image.width + 40)
+      const rect = getItemRect(image)
+      maxX = Math.max(maxX, rect.right)
+      maxY = Math.max(maxY, rect.bottom)
     }
 
     setBoardSize({
@@ -94,6 +196,55 @@ function App() {
       height: Math.max(MIN_BOARD_HEIGHT, viewportHeight + BOARD_PADDING, maxY + BOARD_PADDING),
     })
   }, [images])
+
+  useEffect(() => {
+    const activeGroupIds = selectedIds.filter((id) => images.some((item) => item.id === id))
+    if (activeGroupIds.length > 1) {
+      const bounds = getGroupBounds(activeGroupIds, images)
+      if (!bounds) {
+        return
+      }
+
+      if (groupFadeTimeoutRef.current !== null) {
+        window.clearTimeout(groupFadeTimeoutRef.current)
+        groupFadeTimeoutRef.current = null
+      }
+
+      setGroupOverlay({ bounds, active: true })
+      return
+    }
+
+    setGroupOverlay((current) => {
+      if (!current || !current.active) {
+        return current
+      }
+
+      if (groupFadeTimeoutRef.current !== null) {
+        window.clearTimeout(groupFadeTimeoutRef.current)
+      }
+
+      groupFadeTimeoutRef.current = window.setTimeout(() => {
+        setGroupOverlay(null)
+        groupFadeTimeoutRef.current = null
+      }, 180)
+
+      return { ...current, active: false }
+    })
+  }, [selectedIds, images])
+
+  const getBoardPointer = (event: ReactPointerEvent) => {
+    const board = boardRef.current
+    const wrapper = boardWrapRef.current
+    if (!board || !wrapper) {
+      return null
+    }
+
+    const boardRect = board.getBoundingClientRect()
+    return {
+      x: event.clientX - boardRect.left + wrapper.scrollLeft,
+      y: event.clientY - boardRect.top + wrapper.scrollTop,
+    }
+  }
 
   const handleFiles = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) {
@@ -147,9 +298,8 @@ function App() {
       return
     }
 
-    const board = boardRef.current
-    const wrapper = boardWrapRef.current
-    if (!board || !wrapper) {
+    const point = getBoardPointer(event)
+    if (!point) {
       return
     }
 
@@ -157,10 +307,6 @@ function App() {
     if (!targetImage) {
       return
     }
-
-    const boardRect = board.getBoundingClientRect()
-    const x = event.clientX - boardRect.left + wrapper.scrollLeft
-    const y = event.clientY - boardRect.top + wrapper.scrollTop
 
     if (event.altKey) {
       const duplicateId = nextIdRef.current++
@@ -185,10 +331,11 @@ function App() {
       setInteraction({
         kind: 'move',
         id: duplicateId,
-        offsetX: x - targetImage.x,
-        offsetY: y - targetImage.y,
+        offsetX: point.x - targetImage.x,
+        offsetY: point.y - targetImage.y,
       })
       setSelectedId(duplicateId)
+      setSelectedIds([duplicateId])
 
       ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
       return
@@ -196,12 +343,13 @@ function App() {
 
     bringToFront(id)
     setSelectedId(id)
+    setSelectedIds([id])
 
     setInteraction({
       kind: 'move',
       id,
-      offsetX: x - targetImage.x,
-      offsetY: y - targetImage.y,
+      offsetX: point.x - targetImage.x,
+      offsetY: point.y - targetImage.y,
     })
 
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
@@ -214,9 +362,8 @@ function App() {
 
     event.stopPropagation()
 
-    const board = boardRef.current
-    const wrapper = boardWrapRef.current
-    if (!board || !wrapper) {
+    const point = getBoardPointer(event)
+    if (!point) {
       return
     }
 
@@ -227,15 +374,81 @@ function App() {
 
     bringToFront(id)
     setSelectedId(id)
-
-    const boardRect = board.getBoundingClientRect()
-    const pointerX = event.clientX - boardRect.left + wrapper.scrollLeft
+    setSelectedIds([id])
 
     setInteraction({
       kind: 'resize',
       id,
       startWidth: targetImage.width,
-      startPointerX: pointerX,
+      startPointerX: point.x,
+    })
+
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  }
+
+  const onGroupMovePointerDown = (event: ReactPointerEvent) => {
+    if (event.button !== 0 || !groupOverlay || !groupOverlay.active || selectedIds.length < 2) {
+      return
+    }
+
+    event.stopPropagation()
+
+    const point = getBoardPointer(event)
+    if (!point) {
+      return
+    }
+
+    const activeIds = selectedIds.filter((id) => images.some((item) => item.id === id))
+    const startPositions: Record<number, { x: number; y: number }> = {}
+    for (const item of images) {
+      if (activeIds.includes(item.id)) {
+        startPositions[item.id] = { x: item.x, y: item.y }
+      }
+    }
+
+    setInteraction({
+      kind: 'move-group',
+      ids: activeIds,
+      startPointerX: point.x,
+      startPointerY: point.y,
+      startPositions,
+    })
+
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  }
+
+  const onGroupResizePointerDown = (event: ReactPointerEvent) => {
+    if (event.button !== 0 || !groupOverlay || !groupOverlay.active || selectedIds.length < 2) {
+      return
+    }
+
+    event.stopPropagation()
+
+    const point = getBoardPointer(event)
+    if (!point) {
+      return
+    }
+
+    const activeIds = selectedIds.filter((id) => images.some((item) => item.id === id))
+    const startItems: Record<number, { x: number; y: number; width: number }> = {}
+    let minScale = Number.POSITIVE_INFINITY
+
+    for (const item of images) {
+      if (!activeIds.includes(item.id)) {
+        continue
+      }
+
+      startItems[item.id] = { x: item.x, y: item.y, width: item.width }
+      minScale = Math.min(minScale, MIN_IMAGE_WIDTH / item.width)
+    }
+
+    setInteraction({
+      kind: 'resize-group',
+      ids: activeIds,
+      startPointerX: point.x,
+      startBounds: groupOverlay.bounds,
+      startItems,
+      minScale: Number.isFinite(minScale) ? minScale : 0.1,
     })
 
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
@@ -249,19 +462,45 @@ function App() {
       return
     }
 
-    const board = boardRef.current
-    const currentWrapper = boardWrapRef.current
-    if (!interaction || !board || !currentWrapper) {
+    const point = getBoardPointer(event)
+    if (!point) {
       return
     }
 
-    const boardRect = board.getBoundingClientRect()
-    if (interaction.kind === 'move') {
-      const rawX = event.clientX - boardRect.left + currentWrapper.scrollLeft - interaction.offsetX
-      const rawY = event.clientY - boardRect.top + currentWrapper.scrollTop - interaction.offsetY
+    if (marquee) {
+      const left = Math.min(marquee.startX, point.x)
+      const top = Math.min(marquee.startY, point.y)
+      const right = Math.max(marquee.startX, point.x)
+      const bottom = Math.max(marquee.startY, point.y)
 
-      const x = Math.max(0, rawX)
-      const y = Math.max(0, rawY)
+      const nextSelectedIds = images
+        .filter((item) => {
+          const rect = getItemRect(item)
+          return !(rect.left > right || rect.right < left || rect.top > bottom || rect.bottom < top)
+        })
+        .map((item) => item.id)
+
+      setMarquee((current) =>
+        current
+          ? {
+              ...current,
+              currentX: point.x,
+              currentY: point.y,
+            }
+          : current,
+      )
+      setSelectedIds(nextSelectedIds)
+      setSelectedId(nextSelectedIds.length > 0 ? nextSelectedIds[nextSelectedIds.length - 1] : null)
+      return
+    }
+
+    if (!interaction) {
+      return
+    }
+
+    if (interaction.kind === 'move') {
+      const x = Math.max(0, point.x - interaction.offsetX)
+      const y = Math.max(0, point.y - interaction.offsetY)
 
       setImages((current) =>
         current.map((item) =>
@@ -277,18 +516,68 @@ function App() {
       return
     }
 
-    const pointerX = event.clientX - boardRect.left + currentWrapper.scrollLeft
-    const deltaX = pointerX - interaction.startPointerX
+    if (interaction.kind === 'resize') {
+      const deltaX = point.x - interaction.startPointerX
+      setImages((current) =>
+        current.map((item) => {
+          if (item.id !== interaction.id) {
+            return item
+          }
+
+          return {
+            ...item,
+            width: Math.max(MIN_IMAGE_WIDTH, interaction.startWidth + deltaX),
+          }
+        }),
+      )
+      return
+    }
+
+    if (interaction.kind === 'move-group') {
+      const deltaX = point.x - interaction.startPointerX
+      const deltaY = point.y - interaction.startPointerY
+
+      setImages((current) =>
+        current.map((item) => {
+          if (!interaction.ids.includes(item.id)) {
+            return item
+          }
+
+          const start = interaction.startPositions[item.id]
+          if (!start) {
+            return item
+          }
+
+          return {
+            ...item,
+            x: Math.max(0, start.x + deltaX),
+            y: Math.max(0, start.y + deltaY),
+          }
+        }),
+      )
+      return
+    }
+
+    const deltaX = point.x - interaction.startPointerX
+    const rawScale = (interaction.startBounds.width + deltaX) / interaction.startBounds.width
+    const scale = Math.max(interaction.minScale, rawScale)
+
     setImages((current) =>
       current.map((item) => {
-        if (item.id !== interaction.id) {
+        if (!interaction.ids.includes(item.id)) {
           return item
         }
 
-        const nextWidth = Math.max(MIN_IMAGE_WIDTH, interaction.startWidth + deltaX)
+        const start = interaction.startItems[item.id]
+        if (!start) {
+          return item
+        }
+
         return {
           ...item,
-          width: nextWidth,
+          x: Math.max(0, interaction.startBounds.left + (start.x - interaction.startBounds.left) * scale),
+          y: Math.max(0, interaction.startBounds.top + (start.y - interaction.startBounds.top) * scale),
+          width: Math.max(MIN_IMAGE_WIDTH, start.width * scale),
         }
       }),
     )
@@ -297,16 +586,20 @@ function App() {
   const stopDrag = () => {
     setInteraction(null)
     setPan(null)
+    setMarquee(null)
   }
 
   const clearBoard = () => {
     for (const src of objectUrlsRef.current) {
       URL.revokeObjectURL(src)
     }
+
     objectUrlsRef.current = []
     setImages([])
     setSelectedId(null)
+    setSelectedIds([])
     setInteraction(null)
+    setGroupOverlay(null)
   }
 
   const centerView = () => {
@@ -383,16 +676,35 @@ function App() {
           className="board"
           ref={boardRef}
           onPointerDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setSelectedId(null)
+            if (event.target !== event.currentTarget || event.button !== 0) {
+              return
             }
+
+            const point = getBoardPointer(event)
+            if (!point) {
+              return
+            }
+
+            if (event.ctrlKey) {
+              setMarquee({
+                startX: point.x,
+                startY: point.y,
+                currentX: point.x,
+                currentY: point.y,
+              })
+              ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+              return
+            }
+
+            setSelectedId(null)
+            setSelectedIds([])
           }}
           style={{ width: `${boardSize.width}px`, height: `${boardSize.height}px` }}
         >
           {images.map((image) => (
             <figure
               key={image.id}
-              className={`board-image ${selectedId === image.id ? 'selected' : ''}`}
+              className={`board-image ${selectedSet.has(image.id) ? 'selected' : ''}`}
               style={{
                 transform: `translate(${image.x}px, ${image.y}px)`,
                 width: `${image.width}px`,
@@ -410,6 +722,49 @@ function App() {
               />
             </figure>
           ))}
+
+          {groupOverlay && (
+            <div
+              className={`group-container ${groupOverlay.active ? 'active' : 'inactive'}`}
+              style={{
+                left: `${groupOverlay.bounds.left}px`,
+                top: `${groupOverlay.bounds.top}px`,
+                width: `${groupOverlay.bounds.width}px`,
+                height: `${groupOverlay.bounds.height}px`,
+              }}
+            >
+              {groupOverlay.active && (
+                <>
+                  <button
+                    type="button"
+                    className="group-move-handle"
+                    onPointerDown={onGroupMovePointerDown}
+                    aria-label="Move selected group"
+                  >
+                    Group ({selectedIds.length})
+                  </button>
+                  <button
+                    type="button"
+                    className="group-resize-handle"
+                    onPointerDown={onGroupResizePointerDown}
+                    aria-label="Resize selected group"
+                  />
+                </>
+              )}
+            </div>
+          )}
+
+          {marquee && (
+            <div
+              className="selection-marquee"
+              style={{
+                left: `${Math.min(marquee.startX, marquee.currentX)}px`,
+                top: `${Math.min(marquee.startY, marquee.currentY)}px`,
+                width: `${Math.abs(marquee.currentX - marquee.startX)}px`,
+                height: `${Math.abs(marquee.currentY - marquee.startY)}px`,
+              }}
+            />
+          )}
         </div>
       </section>
     </main>
