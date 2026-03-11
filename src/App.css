@@ -166,6 +166,7 @@
 }
 
 .media-frame {
+  position: relative;
   width: 100%;
   overflow: hidden;
   border-top-left-radius: 7px;
@@ -173,7 +174,22 @@
   background: #f4f7fa;
 }
 
+.media-bg-blur {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(20px) brightness(0.68) saturate(0.92);
+  transform: scale(1.08);
+  transform-origin: center;
+  opacity: 0.95;
+  pointer-events: none;
+}
+
 .media-content {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: block;

@@ -673,7 +673,9 @@ function App() {
         return
       }
 
-      if (!event.ctrlKey && !event.altKey && !event.metaKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      const slideshowPrev = event.key === 'ArrowLeft' || event.key === 'a' || event.key === 'A'
+      const slideshowNext = event.key === 'ArrowRight' || event.key === 'd' || event.key === 'D'
+      if (!event.ctrlKey && !event.altKey && !event.metaKey && (slideshowPrev || slideshowNext)) {
         if (selectedIds.length !== 1) {
           return
         }
@@ -684,7 +686,7 @@ function App() {
         }
 
         event.preventDefault()
-        const direction: 1 | -1 = event.key === 'ArrowRight' ? 1 : -1
+        const direction: 1 | -1 = slideshowNext ? 1 : -1
         advanceMediaForNodeIds([activeNode.id], direction)
         return
       }
@@ -1176,6 +1178,24 @@ function App() {
       current.map((item) => {
         if (item.id !== nodeId) {
           return item
+        }
+
+        if (item.mediaItems && item.mediaItems.length > 1) {
+          const activeIndex = Math.max(0, Math.min(item.activeMediaIndex ?? 0, item.mediaItems.length - 1))
+          const nextMediaItems = item.mediaItems.map((existing, index) => (index === activeIndex ? mediaItem : existing))
+          const next = applyActiveMediaFromItems({
+            ...item,
+            mediaItems: nextMediaItems,
+            activeMediaIndex: activeIndex,
+            paused: false,
+            gifFreezeSrc: undefined,
+          })
+
+          return {
+            ...next,
+            // Preserve slideshow frame ratio for stacked media nodes.
+            aspect: item.aspect,
+          }
         }
 
         return {
@@ -2398,6 +2418,8 @@ function App() {
                   : image.y
               const displayWidth = scalePreview ? Math.max(MIN_IMAGE_WIDTH, scalePreview.width * scaleMode!.previewScale) : image.width
               const isMediaStack = image.mediaKind !== 'note' && (image.mediaItems?.length ?? 0) > 1
+              const displayImageSrc = image.isGif && image.paused && image.gifFreezeSrc ? image.gifFreezeSrc : image.src
+              const shouldUseBlurBg = isMediaStack && image.mediaKind === 'image' && !image.isGif
 
               return (
             <figure
@@ -2557,9 +2579,18 @@ function App() {
                 </div>
               ) : (
                 <div className="media-frame" style={{ height: `${displayWidth * image.aspect}px` }}>
+                  {shouldUseBlurBg && (
+                    <img
+                      className="media-bg-blur"
+                      src={displayImageSrc}
+                      alt=""
+                      draggable={false}
+                      aria-hidden="true"
+                    />
+                  )}
                   <img
                     className="media-content"
-                    src={image.isGif && image.paused && image.gifFreezeSrc ? image.gifFreezeSrc : image.src}
+                    src={displayImageSrc}
                     alt={image.name}
                     draggable={false}
                     onLoad={(event) => {
