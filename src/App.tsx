@@ -12,11 +12,14 @@ type BoardImage = {
   id: number
   src: string
   sourceDataUrl: string
+  sourceUrl?: string
   name: string
-  mediaKind: 'image' | 'video'
+  mediaKind: 'image' | 'video' | 'note'
   isGif: boolean
   paused: boolean
   gifFreezeSrc?: string
+  noteMarkdown?: string
+  noteMode?: 'editing' | 'viewing'
   x: number
   y: number
   width: number
@@ -28,17 +31,28 @@ type PreparedMedia = Pick<BoardImage, 'id' | 'src' | 'sourceDataUrl' | 'name' | 
 type SnapshotMedia = {
   id: string
   name: string
-  mediaKind: BoardImage['mediaKind']
+  mediaKind: 'image' | 'video'
   isGif: boolean
   sourceDataUrl: string
 }
 
-type SnapshotNode = Pick<BoardImage, 'id' | 'paused' | 'x' | 'y' | 'width' | 'aspect' | 'z'> & {
+type SnapshotMediaNode = Pick<BoardImage, 'id' | 'paused' | 'x' | 'y' | 'width' | 'aspect' | 'z'> & {
+  kind: 'media'
   mediaId: string
+  sourceUrl?: string
 }
 
-type BoardSnapshotV2 = {
-  version: 2
+type SnapshotNoteNode = Pick<BoardImage, 'id' | 'x' | 'y' | 'width' | 'aspect' | 'z'> & {
+  kind: 'note'
+  name: string
+  noteMarkdown: string
+  noteMode: 'editing' | 'viewing'
+}
+
+type SnapshotNode = SnapshotMediaNode | SnapshotNoteNode
+
+type BoardSnapshotV3 = {
+  version: 3
   createdAt: string
   media: Record<string, SnapshotMedia>
   nodes: SnapshotNode[]
@@ -143,6 +157,7 @@ const START_X = 100
 const START_Y = 100
 const IMAGE_WIDTH = 280
 const MIN_IMAGE_WIDTH = 80
+const NOTE_DEFAULT_ASPECT = 0.7
 const WORLD_SIZE = 120000
 const WORLD_ORIGIN = WORLD_SIZE / 2
 const CAPTION_HEIGHT = 22
@@ -206,6 +221,145 @@ const fileToDataUrl = (file: File) =>
     reader.readAsDataURL(file)
   })
 
+const normalizeHttpUrl = (raw: string) => {
+  const value = raw.trim()
+  if (!value) {
+    return null
+  }
+
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+const extractDropSourceUrls = (dataTransfer: DataTransfer) => {
+  const urls: string[] = []
+  const pushUrl = (candidate: string) => {
+    const normalized = normalizeHttpUrl(candidate)
+    if (normalized && !urls.includes(normalized)) {
+      urls.push(normalized)
+    }
+  }
+
+  const uriList = dataTransfer.getData('text/uri-list')
+  if (uriList) {
+    for (const line of uriList.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) {
+        continue
+      }
+      pushUrl(trimmed)
+    }
+  }
+
+  const plain = dataTransfer.getData('text/plain')
+  if (plain) {
+    for (const token of plain.split(/\s+/)) {
+      pushUrl(token)
+    }
+  }
+
+  const html = dataTransfer.getData('text/html')
+  if (html) {
+    try {
+      const doc = new DOMParser().parseFromString(html, 'text/html')
+      for (const img of Array.from(doc.querySelectorAll('img[src]'))) {
+        pushUrl(img.getAttribute('src') ?? '')
+      }
+      for (const anchor of Array.from(doc.querySelectorAll('a[href]'))) {
+        pushUrl(anchor.getAttribute('href') ?? '')
+      }
+    } catch {
+      // Ignore malformed HTML snippets.
+    }
+  }
+
+  const downloadUrl = dataTransfer.getData('DownloadURL')
+  if (downloadUrl) {
+    const parts = downloadUrl.split(':')
+    if (parts.length >= 3) {
+      pushUrl(parts.slice(2).join(':'))
+    }
+  }
+
+  return urls
+}
+
+const escapeHtml = (value: string) =>
+  value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+
+const renderInlineMarkdown = (value: string) => {
+  let html = escapeHtml(value)
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+  return html
+}
+
+const renderMarkdownToHtml = (markdown: string) => {
+  const lines = markdown.replaceAll('\r\n', '\n').split('\n')
+  const output: string[] = []
+  let inList = false
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed === '') {
+      if (inList) {
+        output.push('</ul>')
+        inList = false
+      }
+      continue
+    }
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.*)$/)
+    if (heading) {
+      if (inList) {
+        output.push('</ul>')
+        inList = false
+      }
+      const level = heading[1].length
+      output.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`)
+      continue
+    }
+
+    const listItem = trimmed.match(/^-\s+(.*)$/)
+    if (listItem) {
+      if (!inList) {
+        output.push('<ul>')
+        inList = true
+      }
+      output.push(`<li>${renderInlineMarkdown(listItem[1])}</li>`)
+      continue
+    }
+
+    if (inList) {
+      output.push('</ul>')
+      inList = false
+    }
+
+    output.push(`<p>${renderInlineMarkdown(trimmed)}</p>`)
+  }
+
+  if (inList) {
+    output.push('</ul>')
+  }
+
+  return output.join('')
+}
+
 function App() {
   const [images, setImages] = useState<BoardImage[]>([])
   const [darkMode, setDarkMode] = useState(false)
@@ -222,6 +376,7 @@ function App() {
   const [groups, setGroups] = useState<PersistedGroup[]>([])
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(null)
+  const [isEditorFocused, setIsEditorFocused] = useState(false)
   const boardRef = useRef<HTMLDivElement | null>(null)
   const boardWrapRef = useRef<HTMLDivElement | null>(null)
   const nextIdRef = useRef(1)
@@ -395,6 +550,10 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditorFocused) {
+        return
+      }
+
       if (event.ctrlKey && event.key.toLowerCase() === 'g' && selectedIds.length > 1) {
         event.preventDefault()
 
@@ -718,7 +877,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [images, moveMode, scaleMode, selectedId, selectedIds])
+  }, [images, isEditorFocused, moveMode, scaleMode, selectedId, selectedIds])
 
   useEffect(() => {
     const wrapper = boardWrapRef.current
@@ -786,7 +945,7 @@ function App() {
     }
   }
 
-  const handleFiles = async (fileList: FileList | null, anchor?: { x: number; y: number }) => {
+  const handleFiles = async (fileList: FileList | null, anchor?: { x: number; y: number }, sourceUrls?: string[]) => {
     if (!fileList || fileList.length === 0) {
       return
     }
@@ -799,13 +958,16 @@ function App() {
     }
 
     const prepared = await Promise.all(
-      files.map(async (file): Promise<PreparedMedia> => {
+      files.map(async (file, index): Promise<PreparedMedia & { sourceUrl?: string }> => {
       const dataUrl = await fileToDataUrl(file)
       const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')
+      const sourceUrl =
+        sourceUrls && sourceUrls.length > 0 ? sourceUrls[Math.min(index, sourceUrls.length - 1)] : undefined
       return {
         id: nextIdRef.current++,
         src: dataUrl,
         sourceDataUrl: dataUrl,
+        sourceUrl,
         name: file.name,
         mediaKind: file.type.startsWith('video/') ? 'video' : 'image',
         isGif,
@@ -829,6 +991,7 @@ function App() {
           id: item.id,
           src: item.src,
           sourceDataUrl: item.sourceDataUrl,
+          sourceUrl: item.sourceUrl,
           name: item.name,
           mediaKind: item.mediaKind,
           isGif: item.isGif,
@@ -851,10 +1014,51 @@ function App() {
     }
   }
 
+  const addNote = () => {
+    const noteId = nextIdRef.current++
+    const noteName = `Note ${images.filter((item) => item.mediaKind === 'note').length + 1}`
+
+    const nextNote: BoardImage = {
+      id: noteId,
+      src: '',
+      sourceDataUrl: '',
+      name: noteName,
+      mediaKind: 'note',
+      isGif: false,
+      paused: false,
+      noteMarkdown: '# Note\n\n- Add your notes here',
+      noteMode: 'editing',
+      x: START_X,
+      y: START_Y,
+      width: IMAGE_WIDTH,
+      aspect: NOTE_DEFAULT_ASPECT,
+      z: nextZRef.current++,
+    }
+
+    setImages((current) => [...current, nextNote])
+    setSelectedId(noteId)
+    setSelectedIds([noteId])
+  }
+
   const saveVersion = () => {
     const media: Record<string, SnapshotMedia> = {}
     const mediaIdBySignature = new Map<string, string>()
     const nodes: SnapshotNode[] = images.map((image) => {
+      if (image.mediaKind === 'note') {
+        return {
+          kind: 'note',
+          id: image.id,
+          name: image.name,
+          noteMarkdown: image.noteMarkdown ?? '',
+          noteMode: image.noteMode === 'editing' ? 'editing' : 'viewing',
+          x: image.x,
+          y: image.y,
+          width: image.width,
+          aspect: image.aspect,
+          z: image.z,
+        }
+      }
+
       const sourceDataUrl = image.sourceDataUrl || image.src
       const signature = `${image.mediaKind}:${image.isGif ? '1' : '0'}:${sourceDataUrl}`
       let mediaId = mediaIdBySignature.get(signature)
@@ -871,6 +1075,7 @@ function App() {
       }
 
       return {
+        kind: 'media',
         id: image.id,
         mediaId,
         paused: image.paused,
@@ -879,11 +1084,12 @@ function App() {
         width: image.width,
         aspect: image.aspect,
         z: image.z,
+        sourceUrl: image.sourceUrl,
       }
     })
 
-    const snapshot: BoardSnapshotV2 = {
-      version: 2,
+    const snapshot: BoardSnapshotV3 = {
+      version: 3,
       createdAt: new Date().toISOString(),
       media,
       nodes,
@@ -908,25 +1114,52 @@ function App() {
 
     try {
       const text = await file.text()
-      const parsed = JSON.parse(text) as Partial<BoardSnapshotV2>
-      if (!parsed || parsed.version !== 2 || !parsed.media || !Array.isArray(parsed.nodes)) {
+      const parsed = JSON.parse(text) as Partial<BoardSnapshotV3>
+      if (!parsed || parsed.version !== 3 || !parsed.media || !Array.isArray(parsed.nodes)) {
         throw new Error('Unsupported snapshot format')
       }
 
       const mediaMap = parsed.media as Record<string, Partial<SnapshotMedia>>
       const loadedImages: BoardImage[] = parsed.nodes
-        .filter((node): node is SnapshotNode => {
-          return (
-            typeof node.id === 'number' &&
-            typeof node.mediaId === 'string' &&
-            typeof node.x === 'number' &&
-            typeof node.y === 'number' &&
-            typeof node.width === 'number' &&
-            typeof node.aspect === 'number' &&
-            typeof node.z === 'number'
-          )
-        })
         .map((node) => {
+          if (
+            typeof node?.id !== 'number' ||
+            typeof node?.x !== 'number' ||
+            typeof node?.y !== 'number' ||
+            typeof node?.width !== 'number' ||
+            typeof node?.aspect !== 'number' ||
+            typeof node?.z !== 'number'
+          ) {
+            return null
+          }
+
+          if (node.kind === 'note') {
+            if (typeof node.name !== 'string' || typeof node.noteMarkdown !== 'string') {
+              return null
+            }
+
+            return {
+              id: node.id,
+              src: '',
+              sourceDataUrl: '',
+              name: node.name,
+              mediaKind: 'note' as const,
+              isGif: false,
+              paused: false,
+              noteMarkdown: node.noteMarkdown,
+              noteMode: node.noteMode === 'editing' ? 'editing' : 'viewing',
+              x: node.x,
+              y: node.y,
+              width: Math.max(MIN_IMAGE_WIDTH, node.width),
+              aspect: node.aspect > 0 ? node.aspect : NOTE_DEFAULT_ASPECT,
+              z: node.z,
+            }
+          }
+
+          if (node.kind !== 'media' || typeof node.mediaId !== 'string') {
+            return null
+          }
+
           const mediaEntry = mediaMap[node.mediaId]
           if (
             !mediaEntry ||
@@ -937,7 +1170,7 @@ function App() {
             return null
           }
 
-          return {
+          const nextImage: BoardImage = {
             id: node.id,
             src: mediaEntry.sourceDataUrl,
             sourceDataUrl: mediaEntry.sourceDataUrl,
@@ -951,6 +1184,11 @@ function App() {
             aspect: node.aspect > 0 ? node.aspect : 1,
             z: node.z,
           }
+          if (typeof node.sourceUrl === 'string') {
+            nextImage.sourceUrl = node.sourceUrl
+          }
+
+          return nextImage
         })
         .filter((item): item is BoardImage => item !== null)
 
@@ -1578,6 +1816,9 @@ function App() {
         <button type="button" onClick={saveVersion}>
           Save Version
         </button>
+        <button type="button" onClick={addNote}>
+          Add Note
+        </button>
         <label className="add-button" htmlFor="version-picker">
           Load Version
         </label>
@@ -1644,7 +1885,14 @@ function App() {
           className="board"
           ref={boardRef}
           onDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
-            if (event.dataTransfer.types.includes('Files')) {
+            const types = event.dataTransfer.types
+            if (
+              types.includes('Files') ||
+              types.includes('text/uri-list') ||
+              types.includes('text/plain') ||
+              types.includes('text/html') ||
+              types.includes('DownloadURL')
+            ) {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'copy'
             }
@@ -1652,7 +1900,8 @@ function App() {
           onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
             event.preventDefault()
             const point = getBoardPointFromClient(event.clientX, event.clientY)
-            void handleFiles(event.dataTransfer.files, point ?? undefined)
+            const sourceUrls = extractDropSourceUrls(event.dataTransfer)
+            void handleFiles(event.dataTransfer.files, point ?? undefined, sourceUrls)
           }}
           onPointerDown={(event) => {
             if (event.button === 0 && (scaleMode || moveMode)) {
@@ -1705,15 +1954,55 @@ function App() {
               return (
             <figure
               key={image.id}
-              className={`board-image ${selectedSet.has(image.id) ? 'selected' : ''}`}
+              className={`board-image ${selectedSet.has(image.id) ? 'selected' : ''} ${image.mediaKind === 'note' ? 'note-node' : ''}`}
               style={{
                 transform: `translate(${displayX + WORLD_ORIGIN}px, ${displayY + WORLD_ORIGIN}px)`,
                 width: `${displayWidth}px`,
+                height:
+                  image.mediaKind === 'note'
+                    ? `${displayWidth * image.aspect + CAPTION_HEIGHT + CARD_BORDER_HEIGHT}px`
+                    : undefined,
                 zIndex: image.z,
               }}
               onPointerDown={(event) => onPointerDown(event, image.id)}
             >
-              {image.mediaKind === 'video' ? (
+              {image.mediaKind === 'note' ? (
+                <div className="note-body">
+                  {image.noteMode === 'editing' ? (
+                    <textarea
+                      className="note-editor"
+                      value={image.noteMarkdown ?? ''}
+                      onPointerDown={(event) => {
+                        event.stopPropagation()
+                      }}
+                      onFocus={() => {
+                        setIsEditorFocused(true)
+                      }}
+                      onBlur={() => {
+                        setIsEditorFocused(false)
+                      }}
+                      onChange={(event) => {
+                        const nextMarkdown = event.currentTarget.value
+                        setImages((current) =>
+                          current.map((item) =>
+                            item.id === image.id
+                              ? {
+                                  ...item,
+                                  noteMarkdown: nextMarkdown,
+                                }
+                              : item,
+                          ),
+                        )
+                      }}
+                    />
+                  ) : (
+                    <div
+                      className="note-markdown"
+                      dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(image.noteMarkdown ?? '') }}
+                    />
+                  )}
+                </div>
+              ) : image.mediaKind === 'video' ? (
                 <video
                   src={image.src}
                   muted
@@ -1843,7 +2132,51 @@ function App() {
                   }}
                 />
               )}
-              <figcaption>{image.name}</figcaption>
+              <figcaption>
+                <span className="caption-name">{image.name}</span>
+                {image.mediaKind === 'note' && (
+                  <button
+                    type="button"
+                    className="note-mode-toggle"
+                    onPointerDown={(event) => {
+                      event.stopPropagation()
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setImages((current) =>
+                        current.map((item) =>
+                          item.id === image.id
+                            ? {
+                                ...item,
+                                noteMode: item.noteMode === 'editing' ? 'viewing' : 'editing',
+                              }
+                            : item,
+                        ),
+                      )
+                    }}
+                    aria-label={`${image.noteMode === 'editing' ? 'View' : 'Edit'} ${image.name}`}
+                  >
+                    {image.noteMode === 'editing' ? 'View' : 'Edit'}
+                  </button>
+                )}
+                {image.sourceUrl && (
+                  <button
+                    type="button"
+                    className="source-link"
+                    onPointerDown={(event) => {
+                      event.stopPropagation()
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      window.open(image.sourceUrl, '_blank', 'noopener,noreferrer')
+                    }}
+                    title={image.sourceUrl}
+                    aria-label={`Open source for ${image.name}`}
+                  >
+                    Source
+                  </button>
+                )}
+              </figcaption>
               <button
                 type="button"
                 className="resize-handle"

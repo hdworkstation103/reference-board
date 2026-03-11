@@ -132,6 +132,12 @@
   border: 1px solid #d2dbe5;
 }
 
+.note-node {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .board-image.selected {
   border: 2px solid #2d7ff0;
   box-shadow:
@@ -159,16 +165,122 @@
   border-top-right-radius: 7px;
 }
 
+.note-body {
+  flex: 1;
+  min-height: 0;
+  background: #fffef7;
+  border-top-left-radius: 7px;
+  border-top-right-radius: 7px;
+}
+
+.note-editor {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  margin: 0;
+  padding: 10px;
+  background: transparent;
+  color: #243140;
+  font: 13px/1.4 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  resize: none;
+  outline: none;
+}
+
+.note-markdown {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: 10px;
+  color: #243140;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.note-markdown p,
+.note-markdown ul,
+.note-markdown h1,
+.note-markdown h2,
+.note-markdown h3,
+.note-markdown h4,
+.note-markdown h5,
+.note-markdown h6 {
+  margin: 0 0 8px;
+}
+
+.note-markdown ul {
+  padding-left: 16px;
+}
+
+.note-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.note-markdown a {
+  color: #2d7ff0;
+  text-decoration: none;
+}
+
+.note-markdown a:hover {
+  text-decoration: underline;
+}
+
 .board-image figcaption {
-  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 28px 4px 8px;
   font-size: 11px;
   line-height: 1.2;
   color: #556270;
   border-top: 1px solid #e2e8ef;
   background: #f9fbfd;
+}
+
+.caption-name {
+  min-width: 0;
+  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.source-link {
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: 1px solid #aeb8c2;
+  background: #ffffff;
+  color: #375372;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.note-mode-toggle {
+  margin-left: auto;
+  border: 1px solid #aeb8c2;
+  background: #ffffff;
+  color: #375372;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.note-mode-toggle:hover {
+  background: #edf4ff;
+}
+
+.source-link:hover {
+  background: #edf4ff;
 }
 
 .app-shell.dark .board-image {
@@ -176,10 +288,43 @@
   border-color: #3f3f46;
 }
 
+.app-shell.dark .note-body {
+  background: #1f1f20;
+}
+
+.app-shell.dark .note-editor,
+.app-shell.dark .note-markdown {
+  color: #d0d0d0;
+}
+
+.app-shell.dark .note-markdown code {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .app-shell.dark .board-image figcaption {
   color: #bdbdbd;
   border-top-color: #3a3a3a;
   background: #2d2d30;
+}
+
+.app-shell.dark .source-link {
+  border-color: #4a4a4d;
+  background: #252526;
+  color: #9ecbff;
+}
+
+.app-shell.dark .note-mode-toggle {
+  border-color: #4a4a4d;
+  background: #252526;
+  color: #9ecbff;
+}
+
+.app-shell.dark .source-link:hover {
+  background: #353538;
+}
+
+.app-shell.dark .note-mode-toggle:hover {
+  background: #353538;
 }
 
 .resize-handle {
