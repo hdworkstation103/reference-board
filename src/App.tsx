@@ -11,7 +11,7 @@ import './App.css'
 type BoardImage = {
   id: number
   src: string
-  sourceDataUrl: string
+  sourceDataUrl?: string
   sourceUrl?: string
   name: string
   mediaKind: 'image' | 'video' | 'note'
@@ -33,7 +33,7 @@ type SnapshotMedia = {
   name: string
   mediaKind: 'image' | 'video'
   isGif: boolean
-  sourceDataUrl: string
+  sourceDataUrl?: string
 }
 
 type SnapshotMediaNode = Pick<BoardImage, 'id' | 'paused' | 'x' | 'y' | 'width' | 'aspect' | 'z'> & {
@@ -373,6 +373,7 @@ function App() {
   const [videoTimelines, setVideoTimelines] = useState<Record<number, MediaTimeline>>({})
   const [gifFrameCounts, setGifFrameCounts] = useState<Record<number, number>>({})
   const [gifSeekFrames, setGifSeekFrames] = useState<Record<number, number>>({})
+  const [brokenMediaIds, setBrokenMediaIds] = useState<Record<number, true>>({})
   const [groups, setGroups] = useState<PersistedGroup[]>([])
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(null)
@@ -544,6 +545,23 @@ function App() {
           return false
         })
 
+      return changed ? next : current
+    })
+  }, [images])
+
+  useEffect(() => {
+    const validIds = new Set(images.map((item) => item.id))
+    setBrokenMediaIds((current) => {
+      let changed = false
+      const next: Record<number, true> = {}
+      for (const key of Object.keys(current)) {
+        const id = Number(key)
+        if (validIds.has(id)) {
+          next[id] = true
+        } else {
+          changed = true
+        }
+      }
       return changed ? next : current
     })
   }, [images])
@@ -1014,6 +1032,95 @@ function App() {
     }
   }
 
+  const replaceNodeWithFile = async (nodeId: number, file: File, sourceUrl?: string) => {
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      return
+    }
+
+    const dataUrl = await fileToDataUrl(file)
+    const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')
+
+    setImages((current) =>
+      current.map((item) => {
+        if (item.id !== nodeId) {
+          return item
+        }
+
+        return {
+          ...item,
+          src: dataUrl,
+          sourceDataUrl: dataUrl,
+          sourceUrl,
+          name: file.name,
+          mediaKind: file.type.startsWith('video/') ? 'video' : 'image',
+          isGif,
+          paused: false,
+          gifFreezeSrc: undefined,
+          noteMarkdown: undefined,
+          noteMode: undefined,
+          aspect: 1,
+        }
+      }),
+    )
+
+    setVideoTimelines((current) => {
+      const next = { ...current }
+      delete next[nodeId]
+      return next
+    })
+    setGifFrameCounts((current) => {
+      const next = { ...current }
+      delete next[nodeId]
+      return next
+    })
+    setGifSeekFrames((current) => {
+      const next = { ...current }
+      delete next[nodeId]
+      return next
+    })
+    setBrokenMediaIds((current) => {
+      if (!current[nodeId]) {
+        return current
+      }
+      const next = { ...current }
+      delete next[nodeId]
+      return next
+    })
+    setSeekPanelId((current) => (current === nodeId ? null : current))
+  }
+
+  const handleBoardDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+
+    const droppedFiles = Array.from(event.dataTransfer.files).filter(
+      (file) => file.type.startsWith('image/') || file.type.startsWith('video/'),
+    )
+    if (droppedFiles.length === 0) {
+      return
+    }
+
+    const point = getBoardPointFromClient(event.clientX, event.clientY)
+    const sourceUrls = extractDropSourceUrls(event.dataTransfer)
+    const sourceUrl = sourceUrls.length > 0 ? sourceUrls[0] : undefined
+
+    if (point) {
+      const targetNode = [...images]
+        .filter((item) => item.mediaKind !== 'note')
+        .sort((a, b) => b.z - a.z)
+        .find((item) => {
+          const rect = getItemRect(item)
+          return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom
+        })
+
+      if (targetNode) {
+        void replaceNodeWithFile(targetNode.id, droppedFiles[0], sourceUrl)
+        return
+      }
+    }
+
+    void handleFiles(event.dataTransfer.files, point ?? undefined, sourceUrls)
+  }
+
   const addNote = () => {
     const noteId = nextIdRef.current++
     const noteName = `Note ${images.filter((item) => item.mediaKind === 'note').length + 1}`
@@ -1060,7 +1167,10 @@ function App() {
       }
 
       const sourceDataUrl = image.sourceDataUrl || image.src
-      const signature = `${image.mediaKind}:${image.isGif ? '1' : '0'}:${sourceDataUrl}`
+      const hasSource = typeof image.sourceUrl === 'string' && image.sourceUrl.length > 0
+      const signature = hasSource
+        ? `${image.mediaKind}:source:${image.isGif ? '1' : '0'}:${image.sourceUrl}`
+        : `${image.mediaKind}:data:${image.isGif ? '1' : '0'}:${sourceDataUrl}`
       let mediaId = mediaIdBySignature.get(signature)
       if (!mediaId) {
         mediaId = `m${mediaIdBySignature.size + 1}`
@@ -1070,7 +1180,7 @@ function App() {
           name: image.name,
           mediaKind: image.mediaKind,
           isGif: image.isGif,
-          sourceDataUrl,
+          sourceDataUrl: hasSource ? undefined : sourceDataUrl,
         }
       }
 
@@ -1163,17 +1273,23 @@ function App() {
           const mediaEntry = mediaMap[node.mediaId]
           if (
             !mediaEntry ||
-            typeof mediaEntry.sourceDataUrl !== 'string' ||
             typeof mediaEntry.name !== 'string' ||
             (mediaEntry.mediaKind !== 'image' && mediaEntry.mediaKind !== 'video')
           ) {
             return null
           }
 
+          const preferredSrc =
+            typeof node.sourceUrl === 'string' && node.sourceUrl.length > 0
+              ? node.sourceUrl
+              : typeof mediaEntry.sourceDataUrl === 'string'
+                ? mediaEntry.sourceDataUrl
+                : ''
+
           const nextImage: BoardImage = {
             id: node.id,
-            src: mediaEntry.sourceDataUrl,
-            sourceDataUrl: mediaEntry.sourceDataUrl,
+            src: preferredSrc,
+            sourceDataUrl: typeof mediaEntry.sourceDataUrl === 'string' ? mediaEntry.sourceDataUrl : undefined,
             name: mediaEntry.name,
             mediaKind: mediaEntry.mediaKind,
             isGif: Boolean(mediaEntry.isGif),
@@ -1219,6 +1335,7 @@ function App() {
       setVideoTimelines({})
       setGifFrameCounts({})
       setGifSeekFrames({})
+      setBrokenMediaIds({})
 
       const maxImageId = loadedImages.reduce((max, item) => Math.max(max, item.id), 0)
       const maxZ = loadedImages.reduce((max, item) => Math.max(max, item.z), 0)
@@ -1264,6 +1381,22 @@ function App() {
 
     const targetImage = images.find((img) => img.id === id)
     if (!targetImage) {
+      return
+    }
+
+    if (event.ctrlKey) {
+      event.preventDefault()
+      if (selectedSet.has(id)) {
+        const next = selectedIds.filter((selectedNodeId) => selectedNodeId !== id)
+        setSelectedIds(next)
+        if (selectedId === id) {
+          setSelectedId(next.length > 0 ? next[next.length - 1] : null)
+        }
+        return
+      }
+
+      setSelectedIds([...selectedIds, id])
+      setSelectedId(id)
       return
     }
 
@@ -1782,6 +1915,7 @@ function App() {
     setSeekPanelId(null)
     setScaleMode(null)
     setMoveMode(null)
+    setBrokenMediaIds({})
   }
 
   const centerView = () => {
@@ -1898,10 +2032,7 @@ function App() {
             }
           }}
           onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
-            event.preventDefault()
-            const point = getBoardPointFromClient(event.clientX, event.clientY)
-            const sourceUrls = extractDropSourceUrls(event.dataTransfer)
-            void handleFiles(event.dataTransfer.files, point ?? undefined, sourceUrls)
+            handleBoardDrop(event)
           }}
           onPointerDown={(event) => {
             if (event.button === 0 && (scaleMode || moveMode)) {
@@ -2002,6 +2133,11 @@ function App() {
                     />
                   )}
                 </div>
+              ) : brokenMediaIds[image.id] ? (
+                <div className="broken-media" aria-label={`${image.name} failed to load`}>
+                  <div className="broken-media-icon">!</div>
+                  <div className="broken-media-label">Media unavailable</div>
+                </div>
               ) : image.mediaKind === 'video' ? (
                 <video
                   src={image.src}
@@ -2015,6 +2151,15 @@ function App() {
                     videoRefs.current[image.id] = element
                   }}
                   onLoadedMetadata={(event) => {
+                    setBrokenMediaIds((current) => {
+                      if (!current[image.id]) {
+                        return current
+                      }
+                      const next = { ...current }
+                      delete next[image.id]
+                      return next
+                    })
+
                     const videoEl = event.currentTarget
                     if (!videoEl.videoWidth || !videoEl.videoHeight) {
                       return
@@ -2077,6 +2222,28 @@ function App() {
                       }
                     })
                   }}
+                  onError={() => {
+                    if (
+                      image.sourceUrl &&
+                      image.src === image.sourceUrl &&
+                      image.sourceDataUrl &&
+                      image.sourceDataUrl !== image.src
+                    ) {
+                      setImages((current) =>
+                        current.map((item) =>
+                          item.id === image.id
+                            ? {
+                                ...item,
+                                src: image.sourceDataUrl!,
+                              }
+                            : item,
+                        ),
+                      )
+                      return
+                    }
+
+                    setBrokenMediaIds((current) => ({ ...current, [image.id]: true }))
+                  }}
                 />
               ) : (
                 <img
@@ -2084,6 +2251,15 @@ function App() {
                   alt={image.name}
                   draggable={false}
                   onLoad={(event) => {
+                    setBrokenMediaIds((current) => {
+                      if (!current[image.id]) {
+                        return current
+                      }
+                      const next = { ...current }
+                      delete next[image.id]
+                      return next
+                    })
+
                     const imgEl = event.currentTarget
                     if (!imgEl.naturalWidth || !imgEl.naturalHeight) {
                       return
@@ -2129,6 +2305,28 @@ function App() {
                         return didChange ? nextItem : item
                       }),
                     )
+                  }}
+                  onError={() => {
+                    if (
+                      image.sourceUrl &&
+                      image.src === image.sourceUrl &&
+                      image.sourceDataUrl &&
+                      image.sourceDataUrl !== image.src
+                    ) {
+                      setImages((current) =>
+                        current.map((item) =>
+                          item.id === image.id
+                            ? {
+                                ...item,
+                                src: image.sourceDataUrl!,
+                              }
+                            : item,
+                        ),
+                      )
+                      return
+                    }
+
+                    setBrokenMediaIds((current) => ({ ...current, [image.id]: true }))
                   }}
                 />
               )}
