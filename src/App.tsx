@@ -11,6 +11,7 @@ import './App.css'
 type BoardImage = {
   id: number
   src: string
+  sourceDataUrl: string
   name: string
   mediaKind: 'image' | 'video'
   isGif: boolean
@@ -23,7 +24,28 @@ type BoardImage = {
   z: number
 }
 
-type PreparedMedia = Pick<BoardImage, 'id' | 'src' | 'name' | 'mediaKind' | 'isGif' | 'paused' | 'z'>
+type PreparedMedia = Pick<BoardImage, 'id' | 'src' | 'sourceDataUrl' | 'name' | 'mediaKind' | 'isGif' | 'paused' | 'z'>
+type SnapshotMedia = {
+  id: string
+  name: string
+  mediaKind: BoardImage['mediaKind']
+  isGif: boolean
+  sourceDataUrl: string
+}
+
+type SnapshotNode = Pick<BoardImage, 'id' | 'paused' | 'x' | 'y' | 'width' | 'aspect' | 'z'> & {
+  mediaId: string
+}
+
+type BoardSnapshotV2 = {
+  version: 2
+  createdAt: string
+  media: Record<string, SnapshotMedia>
+  nodes: SnapshotNode[]
+  groups: PersistedGroup[]
+  darkMode: boolean
+}
+
 type MediaTimeline = {
   current: number
   duration: number
@@ -170,6 +192,20 @@ const hasSameMembers = (a: number[], b: number[]) => {
   return a.every((id) => bSet.has(id))
 }
 
+const fileToDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+        return
+      }
+      reject(new Error(`Failed to read ${file.name}`))
+    }
+    reader.onerror = () => reject(reader.error ?? new Error(`Failed to read ${file.name}`))
+    reader.readAsDataURL(file)
+  })
+
 function App() {
   const [images, setImages] = useState<BoardImage[]>([])
   const [darkMode, setDarkMode] = useState(false)
@@ -191,7 +227,6 @@ function App() {
   const nextIdRef = useRef(1)
   const nextGroupIdRef = useRef(1)
   const nextZRef = useRef(1)
-  const objectUrlsRef = useRef<string[]>([])
   const gifDecoderCacheRef = useRef<Record<number, { decoder: any; frameCount: number }>>({})
   const groupFadeTimeoutRef = useRef<number | null>(null)
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({})
@@ -218,9 +253,6 @@ function App() {
 
   useEffect(() => {
     return () => {
-      for (const src of objectUrlsRef.current) {
-        URL.revokeObjectURL(src)
-      }
       for (const entry of Object.values(gifDecoderCacheRef.current)) {
         if (entry?.decoder && typeof entry.decoder.close === 'function') {
           entry.decoder.close()
@@ -754,7 +786,7 @@ function App() {
     }
   }
 
-  const handleFiles = (fileList: FileList | null, anchor?: { x: number; y: number }) => {
+  const handleFiles = async (fileList: FileList | null, anchor?: { x: number; y: number }) => {
     if (!fileList || fileList.length === 0) {
       return
     }
@@ -766,20 +798,22 @@ function App() {
       return
     }
 
-    const prepared: PreparedMedia[] = files.map((file) => {
-      const src = URL.createObjectURL(file)
-      objectUrlsRef.current.push(src)
+    const prepared = await Promise.all(
+      files.map(async (file): Promise<PreparedMedia> => {
+      const dataUrl = await fileToDataUrl(file)
       const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')
       return {
         id: nextIdRef.current++,
-        src,
+        src: dataUrl,
+        sourceDataUrl: dataUrl,
         name: file.name,
         mediaKind: file.type.startsWith('video/') ? 'video' : 'image',
         isGif,
         paused: false,
         z: nextZRef.current++,
       }
-    })
+      }),
+    )
 
     setImages((current) => {
       const cols = 5
@@ -794,6 +828,7 @@ function App() {
         return {
           id: item.id,
           src: item.src,
+          sourceDataUrl: item.sourceDataUrl,
           name: item.name,
           mediaKind: item.mediaKind,
           isGif: item.isGif,
@@ -813,6 +848,149 @@ function App() {
       const newIds = prepared.map((item) => item.id)
       setSelectedIds(newIds)
       setSelectedId(newIds[newIds.length - 1])
+    }
+  }
+
+  const saveVersion = () => {
+    const media: Record<string, SnapshotMedia> = {}
+    const mediaIdBySignature = new Map<string, string>()
+    const nodes: SnapshotNode[] = images.map((image) => {
+      const sourceDataUrl = image.sourceDataUrl || image.src
+      const signature = `${image.mediaKind}:${image.isGif ? '1' : '0'}:${sourceDataUrl}`
+      let mediaId = mediaIdBySignature.get(signature)
+      if (!mediaId) {
+        mediaId = `m${mediaIdBySignature.size + 1}`
+        mediaIdBySignature.set(signature, mediaId)
+        media[mediaId] = {
+          id: mediaId,
+          name: image.name,
+          mediaKind: image.mediaKind,
+          isGif: image.isGif,
+          sourceDataUrl,
+        }
+      }
+
+      return {
+        id: image.id,
+        mediaId,
+        paused: image.paused,
+        x: image.x,
+        y: image.y,
+        width: image.width,
+        aspect: image.aspect,
+        z: image.z,
+      }
+    })
+
+    const snapshot: BoardSnapshotV2 = {
+      version: 2,
+      createdAt: new Date().toISOString(),
+      media,
+      nodes,
+      groups: groups.map((group) => ({ id: group.id, memberIds: [...group.memberIds] })),
+      darkMode,
+    }
+
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' })
+    const href = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = href
+    link.download = `pureref-lite-${snapshot.createdAt.replaceAll(':', '-')}.json`
+    link.click()
+    URL.revokeObjectURL(href)
+  }
+
+  const loadVersion = async (fileList: FileList | null) => {
+    const file = fileList?.[0]
+    if (!file) {
+      return
+    }
+
+    try {
+      const text = await file.text()
+      const parsed = JSON.parse(text) as Partial<BoardSnapshotV2>
+      if (!parsed || parsed.version !== 2 || !parsed.media || !Array.isArray(parsed.nodes)) {
+        throw new Error('Unsupported snapshot format')
+      }
+
+      const mediaMap = parsed.media as Record<string, Partial<SnapshotMedia>>
+      const loadedImages: BoardImage[] = parsed.nodes
+        .filter((node): node is SnapshotNode => {
+          return (
+            typeof node.id === 'number' &&
+            typeof node.mediaId === 'string' &&
+            typeof node.x === 'number' &&
+            typeof node.y === 'number' &&
+            typeof node.width === 'number' &&
+            typeof node.aspect === 'number' &&
+            typeof node.z === 'number'
+          )
+        })
+        .map((node) => {
+          const mediaEntry = mediaMap[node.mediaId]
+          if (
+            !mediaEntry ||
+            typeof mediaEntry.sourceDataUrl !== 'string' ||
+            typeof mediaEntry.name !== 'string' ||
+            (mediaEntry.mediaKind !== 'image' && mediaEntry.mediaKind !== 'video')
+          ) {
+            return null
+          }
+
+          return {
+            id: node.id,
+            src: mediaEntry.sourceDataUrl,
+            sourceDataUrl: mediaEntry.sourceDataUrl,
+            name: mediaEntry.name,
+            mediaKind: mediaEntry.mediaKind,
+            isGif: Boolean(mediaEntry.isGif),
+            paused: Boolean(node.paused),
+            x: node.x,
+            y: node.y,
+            width: Math.max(MIN_IMAGE_WIDTH, node.width),
+            aspect: node.aspect > 0 ? node.aspect : 1,
+            z: node.z,
+          }
+        })
+        .filter((item): item is BoardImage => item !== null)
+
+      const validIds = new Set(loadedImages.map((item) => item.id))
+      const loadedGroups = Array.isArray(parsed.groups)
+        ? parsed.groups
+            .map((group, index) => ({
+              id: typeof group?.id === 'number' ? group.id : index + 1,
+              memberIds: Array.isArray(group?.memberIds)
+                ? group.memberIds.filter((id): id is number => typeof id === 'number' && validIds.has(id))
+                : [],
+            }))
+            .filter((group) => group.memberIds.length > 1)
+        : []
+
+      setImages(loadedImages)
+      setGroups(loadedGroups)
+      setDarkMode(Boolean(parsed.darkMode))
+      setSelectedId(null)
+      setSelectedIds([])
+      setSeekPanelId(null)
+      setScaleMode(null)
+      setMoveMode(null)
+      setInteraction(null)
+      setGroupOverlay(null)
+      setPan(null)
+      setMarquee(null)
+      setVideoTimelines({})
+      setGifFrameCounts({})
+      setGifSeekFrames({})
+
+      const maxImageId = loadedImages.reduce((max, item) => Math.max(max, item.id), 0)
+      const maxZ = loadedImages.reduce((max, item) => Math.max(max, item.z), 0)
+      const maxGroupId = loadedGroups.reduce((max, group) => Math.max(max, group.id), 0)
+      nextIdRef.current = maxImageId + 1
+      nextZRef.current = maxZ + 1
+      nextGroupIdRef.current = maxGroupId + 1
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load snapshot'
+      window.alert(`Unable to load version: ${message}`)
     }
   }
 
@@ -1357,11 +1535,6 @@ function App() {
   }
 
   const clearBoard = () => {
-    for (const src of objectUrlsRef.current) {
-      URL.revokeObjectURL(src)
-    }
-
-    objectUrlsRef.current = []
     setImages([])
     setSelectedId(null)
     setSelectedIds([])
@@ -1398,7 +1571,22 @@ function App() {
           accept="image/*,video/*"
           multiple
           onChange={(event) => {
-            handleFiles(event.target.files)
+            void handleFiles(event.target.files)
+            event.currentTarget.value = ''
+          }}
+        />
+        <button type="button" onClick={saveVersion}>
+          Save Version
+        </button>
+        <label className="add-button" htmlFor="version-picker">
+          Load Version
+        </label>
+        <input
+          id="version-picker"
+          type="file"
+          accept="application/json,.json"
+          onChange={(event) => {
+            void loadVersion(event.target.files)
             event.currentTarget.value = ''
           }}
         />
@@ -1464,7 +1652,7 @@ function App() {
           onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
             event.preventDefault()
             const point = getBoardPointFromClient(event.clientX, event.clientY)
-            handleFiles(event.dataTransfer.files, point ?? undefined)
+            void handleFiles(event.dataTransfer.files, point ?? undefined)
           }}
           onPointerDown={(event) => {
             if (event.button === 0 && (scaleMode || moveMode)) {
