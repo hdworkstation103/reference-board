@@ -132,6 +132,12 @@
   border: 1px solid #d2dbe5;
 }
 
+.node-shell {
+  --node-border-radius: 8px;
+  --node-border-color: #d2dbe5;
+  --node-selection-color: #3994ff;
+}
+
 .note-node {
   display: flex;
   flex-direction: column;
@@ -139,10 +145,48 @@
 }
 
 .board-image.selected {
-  border: 2px solid #2d7ff0;
+  border-color: transparent;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+}
+
+.shader-selection-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: var(--node-border-radius);
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 1;
+  mix-blend-mode: normal;
+  z-index: 2;
+  border: 2px solid color-mix(in srgb, var(--node-selection-color) 95%, white 5%);
   box-shadow:
-    0 0 0 2px rgba(45, 127, 240, 0.25),
-    0 6px 20px rgba(0, 0, 0, 0.2);
+    0 0 0 2px color-mix(in srgb, var(--node-selection-color) 35%, transparent),
+    0 0 18px color-mix(in srgb, var(--node-selection-color) 45%, transparent);
+  background: transparent;
+  animation: selection-pulse 1800ms ease-in-out infinite alternate;
+}
+
+.shader-selection-layer canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+@keyframes selection-pulse {
+  from {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--node-selection-color) 28%, transparent),
+      0 0 10px color-mix(in srgb, var(--node-selection-color) 24%, transparent);
+  }
+
+  to {
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--node-selection-color) 50%, transparent),
+      0 0 24px color-mix(in srgb, var(--node-selection-color) 48%, transparent);
+  }
 }
 
 .board-image:active {
@@ -301,7 +345,8 @@
   text-decoration: underline;
 }
 
-.board-image figcaption {
+.board-image figcaption,
+.node-footer {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -392,6 +437,11 @@
 .app-shell.dark .board-image {
   background: #252526;
   border-color: #3f3f46;
+}
+
+.app-shell.dark .node-shell {
+  --node-border-color: #3f3f46;
+  --node-selection-color: #4ea3ff;
 }
 
 .app-shell.dark .broken-media {

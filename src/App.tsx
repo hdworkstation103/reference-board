@@ -6,6 +6,7 @@ import {
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import { Shader } from 'react-shaders'
 import './App.css'
 
 type BoardImage = {
@@ -188,6 +189,23 @@ const WORLD_SIZE = 120000
 const WORLD_ORIGIN = WORLD_SIZE / 2
 const CAPTION_HEIGHT = 22
 const CARD_BORDER_HEIGHT = 2
+const SELECTION_SHADER_FS = `
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec2 uv = fragCoord / iResolution.xy;
+  vec2 p = uv * 2.0 - 1.0;
+  p.x *= iResolution.x / iResolution.y;
+
+  float r = length(p);
+  float edge = 1.0 - r;
+  float ring = smoothstep(0.22, 0.02, edge) * (1.0 - smoothstep(0.06, 0.0, edge));
+  float pulse = 0.65 + 0.35 * sin(iTime * 4.0);
+  float sweep = 0.5 + 0.5 * sin((uv.x + uv.y) * 18.0 - iTime * 6.5);
+  vec3 col = mix(vec3(0.08, 0.45, 1.0), vec3(0.35, 1.0, 1.0), sweep);
+  float alpha = ring * (0.55 + 0.45 * pulse);
+
+  fragColor = vec4(col, alpha);
+}
+`
 
 const getItemHeight = (item: BoardImage) => item.width * item.aspect + CAPTION_HEIGHT + CARD_BORDER_HEIGHT
 const getItemRect = (item: BoardImage): ItemRect => ({
@@ -453,6 +471,7 @@ function App() {
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(null)
   const [isEditorFocused, setIsEditorFocused] = useState(false)
+  const [enableSelectionShader, setEnableSelectionShader] = useState(true)
   const boardRef = useRef<HTMLDivElement | null>(null)
   const boardWrapRef = useRef<HTMLDivElement | null>(null)
   const nextIdRef = useRef(1)
@@ -2570,6 +2589,7 @@ function App() {
           {darkMode ? 'Light Mode' : 'Dark Mode'}
         </button>
         <span className="meta">{images.length} image(s)</span>
+        <span className="meta">Selection FX: {enableSelectionShader ? 'Shader' : 'Fallback'}</span>
       </header>
 
       <section
@@ -2686,7 +2706,7 @@ function App() {
               return (
             <figure
               key={image.id}
-              className={`board-image ${selectedSet.has(image.id) ? 'selected' : ''} ${image.mediaKind === 'note' ? 'note-node' : ''} ${isMediaStack ? 'media-stack-node' : ''}`}
+              className={`board-image node-shell ${selectedSet.has(image.id) ? 'selected is-selected' : ''} ${image.mediaKind === 'note' ? 'note-node' : ''} ${isMediaStack ? 'media-stack-node' : ''}`}
               style={{
                 transform: `translate(${displayX + WORLD_ORIGIN}px, ${displayY + WORLD_ORIGIN}px)`,
                 width: `${displayWidth}px`,
@@ -2699,7 +2719,7 @@ function App() {
               onPointerDown={(event) => onPointerDown(event, image.id)}
             >
               {image.mediaKind === 'note' ? (
-                <div className="note-body">
+                <div className="note-body node-body">
                   {image.noteMode === 'editing' ? (
                     <textarea
                       className="note-editor"
@@ -2744,7 +2764,7 @@ function App() {
                   <div className="broken-media-label">Media unavailable</div>
                 </div>
               ) : image.mediaKind === 'video' ? (
-                <div className="media-frame" style={{ height: `${displayWidth * image.aspect}px` }}>
+                <div className="media-frame node-body" style={{ height: `${displayWidth * image.aspect}px` }}>
                   <video
                     className="media-content"
                     src={image.src}
@@ -2840,7 +2860,7 @@ function App() {
                   />
                 </div>
               ) : (
-                <div className="media-frame" style={{ height: `${displayWidth * image.aspect}px` }}>
+                <div className="media-frame node-body" style={{ height: `${displayWidth * image.aspect}px` }}>
                   {shouldUseBlurBg && (
                     <img
                       className="media-bg-blur"
@@ -2922,7 +2942,27 @@ function App() {
                   />
                 </div>
               )}
-              <figcaption>
+              {selectedSet.has(image.id) && (
+                <div className="shader-selection-layer node-selection-fx" aria-hidden="true">
+                  {enableSelectionShader && (
+                    <Shader
+                      fs={SELECTION_SHADER_FS}
+                      clearColor={[0, 0, 0, 0]}
+                      style={{ width: '100%', height: '100%' } as any}
+                      onError={(error) => {
+                        console.warn('Selection shader disabled:', error)
+                        setEnableSelectionShader(false)
+                      }}
+                      onWarning={(warning) => {
+                        if (warning) {
+                          console.warn('Selection shader warning:', warning)
+                        }
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+              <figcaption className="node-footer">
                 <span className="caption-name">{image.name}</span>
                 {isMediaStack && (
                   <span className="stack-count">
