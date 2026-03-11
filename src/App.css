@@ -316,7 +316,6 @@
 }
 
 .source-link {
-  margin-left: auto;
   flex: 0 0 auto;
   border: 1px solid #aeb8c2;
   background: #ffffff;
@@ -330,7 +329,6 @@
 }
 
 .note-mode-toggle {
-  margin-left: auto;
   border: 1px solid #aeb8c2;
   background: #ffffff;
   color: #375372;
@@ -347,6 +345,31 @@
 }
 
 .source-link:hover {
+  background: #edf4ff;
+}
+
+.source-link:disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+  background: #f0f3f6;
+  color: #7f8b98;
+}
+
+.slideshow-toggle {
+  flex: 0 0 auto;
+  border: 1px solid #aeb8c2;
+  background: #ffffff;
+  color: #375372;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.slideshow-toggle:hover {
   background: #edf4ff;
 }
 
@@ -400,6 +423,12 @@
   color: #a9b7c9;
 }
 
+.app-shell.dark .slideshow-toggle {
+  border-color: #4a4a4d;
+  background: #252526;
+  color: #9ecbff;
+}
+
 .app-shell.dark .source-link {
   border-color: #4a4a4d;
   background: #252526;
@@ -416,7 +445,16 @@
   background: #353538;
 }
 
+.app-shell.dark .source-link:disabled {
+  background: #1f1f20;
+  color: #7c8692;
+}
+
 .app-shell.dark .note-mode-toggle:hover {
+  background: #353538;
+}
+
+.app-shell.dark .slideshow-toggle:hover {
   background: #353538;
 }
 

@@ -20,6 +20,7 @@ type BoardImage = {
   gifFreezeSrc?: string
   mediaItems?: NodeMediaItem[]
   activeMediaIndex?: number
+  slideshowPlaying?: boolean
   noteMarkdown?: string
   noteMode?: 'editing' | 'viewing'
   x: number
@@ -52,6 +53,7 @@ type SnapshotMediaNode = Pick<BoardImage, 'id' | 'paused' | 'x' | 'y' | 'width' 
   kind: 'media'
   mediaIds: string[]
   activeMediaIndex: number
+  slideshowPlaying?: boolean
 }
 
 type SnapshotNoteNode = Pick<BoardImage, 'id' | 'x' | 'y' | 'width' | 'aspect' | 'z'> & {
@@ -429,6 +431,7 @@ function App() {
   const pendingVideoSeekRef = useRef<Record<number, number>>({})
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const keyStateRef = useRef({ shift: false })
+  const slideshowTimersRef = useRef<Record<number, number>>({})
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
   const persistentGroupViews = useMemo(
@@ -458,6 +461,10 @@ function App() {
       if (groupFadeTimeoutRef.current !== null) {
         window.clearTimeout(groupFadeTimeoutRef.current)
       }
+      for (const timer of Object.values(slideshowTimersRef.current)) {
+        window.clearInterval(timer)
+      }
+      slideshowTimersRef.current = {}
     }
   }, [])
 
@@ -677,34 +684,8 @@ function App() {
         }
 
         event.preventDefault()
-        const direction = event.key === 'ArrowRight' ? 1 : -1
-        setImages((current) =>
-          current.map((item) => {
-            if (item.id !== activeNode.id || !item.mediaItems || item.mediaItems.length < 2) {
-              return item
-            }
-
-            const nextIndex =
-              (Math.max(0, Math.min(item.activeMediaIndex ?? 0, item.mediaItems.length - 1)) +
-                direction +
-                item.mediaItems.length) %
-              item.mediaItems.length
-
-            const next = applyActiveMediaFromItems({
-              ...item,
-              activeMediaIndex: nextIndex,
-              paused: false,
-              gifFreezeSrc: undefined,
-            })
-
-            return {
-              ...next,
-              // Keep node frame stable from first media.
-              aspect: item.aspect,
-            }
-          }),
-        )
-        setSeekPanelId((current) => (current === activeNode.id ? null : current))
+        const direction: 1 | -1 = event.key === 'ArrowRight' ? 1 : -1
+        advanceMediaForNodeIds([activeNode.id], direction)
         return
       }
 
@@ -1006,6 +987,32 @@ function App() {
   }, [images, isEditorFocused, moveMode, scaleMode, selectedId, selectedIds])
 
   useEffect(() => {
+    const shouldPlay = new Set(
+      images
+        .filter((item) => item.mediaKind !== 'note' && (item.mediaItems?.length ?? 0) > 1 && item.slideshowPlaying)
+        .map((item) => item.id),
+    )
+
+    for (const [idString, timer] of Object.entries(slideshowTimersRef.current)) {
+      const id = Number(idString)
+      if (!shouldPlay.has(id)) {
+        window.clearInterval(timer)
+        delete slideshowTimersRef.current[id]
+      }
+    }
+
+    for (const id of shouldPlay) {
+      if (slideshowTimersRef.current[id] !== undefined) {
+        continue
+      }
+
+      slideshowTimersRef.current[id] = window.setInterval(() => {
+        advanceMediaForNodeIds([id], 1)
+      }, 10000)
+    }
+  }, [images])
+
+  useEffect(() => {
     const wrapper = boardWrapRef.current
     if (!wrapper) {
       return
@@ -1122,6 +1129,7 @@ function App() {
           mediaKind: item.mediaKind,
           isGif: item.isGif,
           paused: item.paused,
+          slideshowPlaying: false,
           x,
           y,
           width: IMAGE_WIDTH,
@@ -1182,6 +1190,7 @@ function App() {
           gifFreezeSrc: undefined,
           mediaItems: [mediaItem],
           activeMediaIndex: 0,
+          slideshowPlaying: false,
           noteMarkdown: undefined,
           noteMode: undefined,
           aspect: 1,
@@ -1251,6 +1260,7 @@ function App() {
           ...item,
           mediaItems: nextItems,
           activeMediaIndex: Math.max(0, Math.min(item.activeMediaIndex ?? 0, nextItems.length - 1)),
+          slideshowPlaying: item.slideshowPlaying ?? false,
         })
 
         return {
@@ -1297,6 +1307,53 @@ function App() {
         return item
       }),
     )
+  }
+
+  const advanceMediaForNodeIds = (nodeIds: number[], direction: 1 | -1) => {
+    if (nodeIds.length === 0) {
+      return
+    }
+
+    const nodeIdSet = new Set(nodeIds)
+    setImages((current) =>
+      current.map((item) => {
+        if (!nodeIdSet.has(item.id) || !item.mediaItems || item.mediaItems.length < 2) {
+          return item
+        }
+
+        const nextIndex =
+          (Math.max(0, Math.min(item.activeMediaIndex ?? 0, item.mediaItems.length - 1)) +
+            direction +
+            item.mediaItems.length) %
+          item.mediaItems.length
+
+        const next = applyActiveMediaFromItems({
+          ...item,
+          activeMediaIndex: nextIndex,
+          paused: false,
+          gifFreezeSrc: undefined,
+        })
+
+        return {
+          ...next,
+          aspect: item.aspect,
+        }
+      }),
+    )
+
+    setBrokenMediaIds((current) => {
+      let changed = false
+      const next = { ...current }
+      for (const id of nodeIds) {
+        if (next[id]) {
+          delete next[id]
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+
+    setSeekPanelId((current) => (current !== null && nodeIdSet.has(current) ? null : current))
   }
 
   const handleBoardDrop = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -1425,6 +1482,7 @@ function App() {
         id: image.id,
         mediaIds,
         activeMediaIndex: Math.max(0, Math.min(image.activeMediaIndex ?? 0, mediaIds.length - 1)),
+        slideshowPlaying: Boolean(image.slideshowPlaying),
         paused: image.paused,
         x: image.x,
         y: image.y,
@@ -1553,6 +1611,7 @@ function App() {
             isGif: activeMedia.isGif,
             mediaItems,
             activeMediaIndex,
+            slideshowPlaying: Boolean(node.slideshowPlaying),
             paused: Boolean(node.paused),
             x: node.x,
             y: node.y,
@@ -2578,6 +2637,31 @@ function App() {
                     {image.mediaItems?.length}
                   </span>
                 )}
+                {isMediaStack && (
+                  <button
+                    type="button"
+                    className="slideshow-toggle"
+                    onPointerDown={(event) => {
+                      event.stopPropagation()
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setImages((current) =>
+                        current.map((item) =>
+                          item.id === image.id
+                            ? {
+                                ...item,
+                                slideshowPlaying: !item.slideshowPlaying,
+                              }
+                            : item,
+                        ),
+                      )
+                    }}
+                    aria-label={`${image.slideshowPlaying ? 'Pause' : 'Play'} slideshow for ${image.name}`}
+                  >
+                    {image.slideshowPlaying ? 'Pause' : 'Play'}
+                  </button>
+                )}
                 {image.mediaKind === 'note' && (
                   <button
                     type="button"
@@ -2603,23 +2687,25 @@ function App() {
                     {image.noteMode === 'editing' ? 'View' : 'Edit'}
                   </button>
                 )}
-                {image.sourceUrl && (
-                  <button
-                    type="button"
-                    className="source-link"
-                    onPointerDown={(event) => {
-                      event.stopPropagation()
-                    }}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      window.open(image.sourceUrl, '_blank', 'noopener,noreferrer')
-                    }}
-                    title={image.sourceUrl}
-                    aria-label={`Open source for ${image.name}`}
-                  >
-                    Source
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="source-link"
+                  disabled={!image.sourceUrl}
+                  onPointerDown={(event) => {
+                    event.stopPropagation()
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    if (!image.sourceUrl) {
+                      return
+                    }
+                    window.open(image.sourceUrl, '_blank', 'noopener,noreferrer')
+                  }}
+                  title={image.sourceUrl ?? 'No source available'}
+                  aria-label={`Open source for ${image.name}`}
+                >
+                  Source
+                </button>
               </figcaption>
               <button
                 type="button"
