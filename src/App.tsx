@@ -134,7 +134,19 @@ type GroupResizeState = {
   minScale: number
 }
 
-type InteractionState = DragState | ResizeState | GroupMoveState | GroupResizeState
+type ExtractSlideState = {
+  kind: 'extract-slide'
+  sourceId: number
+  sourceRect: ItemRect
+  offsetX: number
+  offsetY: number
+  sourceWidth: number
+  sourceAspect: number
+  extractedIndex: number
+  extractedMedia: NodeMediaItem
+}
+
+type InteractionState = DragState | ResizeState | GroupMoveState | GroupResizeState | ExtractSlideState
 type ScaleModeState = {
   ids: number[]
   centerX: number
@@ -400,6 +412,27 @@ const applyActiveMediaFromItems = (item: BoardImage): BoardImage => {
     mediaKind: active.media.mediaKind,
     isGif: active.media.isGif,
   }
+}
+
+const getMediaItemsForNode = (item: BoardImage): NodeMediaItem[] => {
+  if (item.mediaKind === 'note') {
+    return []
+  }
+
+  if (item.mediaItems && item.mediaItems.length > 0) {
+    return item.mediaItems
+  }
+
+  return [
+    {
+      src: item.src,
+      sourceDataUrl: item.sourceDataUrl,
+      sourceUrl: item.sourceUrl,
+      name: item.name,
+      mediaKind: item.mediaKind,
+      isGif: item.isGif,
+    },
+  ]
 }
 
 function App() {
@@ -972,6 +1005,10 @@ function App() {
 
           if (current.kind === 'move' || current.kind === 'resize') {
             return deleteIds.includes(current.id) ? null : current
+          }
+
+          if (current.kind === 'extract-slide') {
+            return deleteIds.includes(current.sourceId) ? null : current
           }
 
           return current.ids.some((id) => deleteIds.includes(id)) ? null : current
@@ -1699,6 +1736,45 @@ function App() {
   }
 
   const onPointerDown = (event: ReactPointerEvent, id: number) => {
+    if (event.button === 2 && event.shiftKey) {
+      event.preventDefault()
+      event.stopPropagation()
+
+      const point = getBoardPointer(event)
+      if (!point) {
+        return
+      }
+
+      const sourceNode = images.find((img) => img.id === id)
+      if (!sourceNode || sourceNode.mediaKind === 'note') {
+        return
+      }
+
+      const sourceItems = getMediaItemsForNode(sourceNode)
+      if (sourceItems.length < 2) {
+        return
+      }
+
+      const extractedIndex = Math.max(0, Math.min(sourceNode.activeMediaIndex ?? 0, sourceItems.length - 1))
+      const extractedMedia = sourceItems[extractedIndex]
+
+      setSelectedId(id)
+      setSelectedIds([id])
+      setInteraction({
+        kind: 'extract-slide',
+        sourceId: id,
+        sourceRect: getItemRect(sourceNode),
+        offsetX: point.x - sourceNode.x,
+        offsetY: point.y - sourceNode.y,
+        sourceWidth: sourceNode.width,
+        sourceAspect: sourceNode.aspect,
+        extractedIndex,
+        extractedMedia,
+      })
+      ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+      return
+    }
+
     if (event.button === 0 && (scaleMode || moveMode)) {
       event.preventDefault()
       event.stopPropagation()
@@ -2210,6 +2286,94 @@ function App() {
       return
     }
 
+    if (interaction.kind === 'extract-slide') {
+      const outsideSource =
+        point.x < interaction.sourceRect.left ||
+        point.x > interaction.sourceRect.right ||
+        point.y < interaction.sourceRect.top ||
+        point.y > interaction.sourceRect.bottom
+
+      if (!outsideSource) {
+        return
+      }
+
+      const newNodeId = nextIdRef.current++
+      const extractedMedia = interaction.extractedMedia
+
+      setImages((current) => {
+        const sourceNode = current.find((item) => item.id === interaction.sourceId && item.mediaKind !== 'note')
+        if (!sourceNode) {
+          return current
+        }
+
+        const sourceItems = getMediaItemsForNode(sourceNode)
+        if (sourceItems.length < 2) {
+          return current
+        }
+
+        const safeIndex = Math.max(0, Math.min(interaction.extractedIndex, sourceItems.length - 1))
+        const nextSourceItems = sourceItems.filter((_, index) => index !== safeIndex)
+        if (nextSourceItems.length === 0) {
+          return current
+        }
+
+        const nextSourceIndex = Math.max(0, Math.min(sourceNode.activeMediaIndex ?? 0, nextSourceItems.length - 1))
+
+        const extractedNode: BoardImage = {
+          id: newNodeId,
+          src: extractedMedia.src,
+          sourceDataUrl: extractedMedia.sourceDataUrl,
+          sourceUrl: extractedMedia.sourceUrl,
+          name: extractedMedia.name,
+          mediaKind: extractedMedia.mediaKind,
+          isGif: extractedMedia.isGif,
+          paused: false,
+          mediaItems: [extractedMedia],
+          activeMediaIndex: 0,
+          slideshowPlaying: false,
+          x: point.x - interaction.offsetX,
+          y: point.y - interaction.offsetY,
+          width: interaction.sourceWidth,
+          aspect: interaction.sourceAspect,
+          z: nextZRef.current++,
+        }
+
+        return [
+          ...current.map((item) => {
+            if (item.id !== sourceNode.id) {
+              return item
+            }
+
+            const nextSource = applyActiveMediaFromItems({
+              ...item,
+              mediaItems: nextSourceItems,
+              activeMediaIndex: nextSourceIndex,
+              paused: false,
+              gifFreezeSrc: undefined,
+              slideshowPlaying: nextSourceItems.length > 1 ? item.slideshowPlaying : false,
+            })
+
+            return {
+              ...nextSource,
+              aspect: item.aspect,
+            }
+          }),
+          extractedNode,
+        ]
+      })
+
+      setSelectedId(newNodeId)
+      setSelectedIds([newNodeId])
+      setSeekPanelId((current) => (current === interaction.sourceId ? null : current))
+      setInteraction({
+        kind: 'move',
+        id: newNodeId,
+        offsetX: interaction.offsetX,
+        offsetY: interaction.offsetY,
+      })
+      return
+    }
+
     const deltaX = point.x - interaction.startPointerX
     const rawScale = (interaction.startBounds.width + deltaX) / interaction.startBounds.width
     const scale = Math.max(interaction.minScale, rawScale)
@@ -2235,7 +2399,102 @@ function App() {
     )
   }
 
-  const stopDrag = () => {
+  const stopDrag = (event?: ReactPointerEvent<HTMLElement>) => {
+    const shouldMergeOnDrop =
+      Boolean(event?.shiftKey || keyStateRef.current.shift) && interaction?.kind === 'move' && !scaleMode && !moveMode
+
+    if (shouldMergeOnDrop && event) {
+      const point = getBoardPointFromClient(event.clientX, event.clientY)
+      if (point) {
+        const sourceId = interaction.id
+        let mergedTargetId: number | null = null
+        let removedSourceId: number | null = null
+
+        setImages((current) => {
+          const sourceNode = current.find((item) => item.id === sourceId && item.mediaKind !== 'note')
+          if (!sourceNode) {
+            return current
+          }
+
+          const sourceRect = getItemRect(sourceNode)
+          const targetNode = [...current]
+            .filter((item) => item.id !== sourceId && item.mediaKind !== 'note' && item.z < sourceNode.z)
+            .sort((a, b) => b.z - a.z)
+            .find((item) => {
+              const rect = getItemRect(item)
+              return (
+                point.x >= rect.left &&
+                point.x <= rect.right &&
+                point.y >= rect.top &&
+                point.y <= rect.bottom &&
+                !(sourceRect.left > rect.right || sourceRect.right < rect.left || sourceRect.top > rect.bottom || sourceRect.bottom < rect.top)
+              )
+            })
+
+          if (!targetNode) {
+            return current
+          }
+
+          const sourceMediaItems = getMediaItemsForNode(sourceNode)
+          if (sourceMediaItems.length === 0) {
+            return current
+          }
+
+          mergedTargetId = targetNode.id
+          removedSourceId = sourceId
+
+          return current
+            .filter((item) => item.id !== sourceId)
+            .map((item) => {
+              if (item.id !== targetNode.id) {
+                return item
+              }
+
+              const targetMediaItems = getMediaItemsForNode(item)
+              const nextMediaItems = [...targetMediaItems, ...sourceMediaItems]
+              const next = applyActiveMediaFromItems({
+                ...item,
+                mediaItems: nextMediaItems,
+                activeMediaIndex: Math.max(0, Math.min(item.activeMediaIndex ?? 0, targetMediaItems.length - 1)),
+              })
+
+              return {
+                ...next,
+                aspect: item.aspect,
+              }
+            })
+        })
+
+        if (mergedTargetId !== null && removedSourceId !== null) {
+          const removedId = removedSourceId
+          setSelectedIds([mergedTargetId])
+          setSelectedId(mergedTargetId)
+          setSeekPanelId((current) => (current === removedId ? null : current))
+
+          setVideoTimelines((current) => {
+            const next = { ...current }
+            delete next[removedId]
+            return next
+          })
+          setGifFrameCounts((current) => {
+            const next = { ...current }
+            delete next[removedId]
+            return next
+          })
+          setGifSeekFrames((current) => {
+            const next = { ...current }
+            delete next[removedId]
+            return next
+          })
+          setBrokenMediaIds((current) => {
+            const next = { ...current }
+            delete next[removedId]
+            return next
+          })
+        }
+      }
+    }
+
     setInteraction(null)
     setPan(null)
     setMarquee(null)
@@ -2316,6 +2575,9 @@ function App() {
       <section
         className={`board-wrap ${pan ? 'panning' : ''} ${scaleMode ? 'scale-mode' : ''} ${moveMode ? 'move-mode' : ''}`}
         ref={boardWrapRef}
+        onContextMenu={(event) => {
+          event.preventDefault()
+        }}
         onPointerDown={(event) => {
           if (event.button === 0 && (scaleMode || moveMode)) {
             event.preventDefault()
