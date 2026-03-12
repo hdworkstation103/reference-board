@@ -6,456 +6,66 @@ import {
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Shader } from 'react-shaders'
-import './App.css'
+import AppToolbar from './features/board/components/AppToolbar'
+import BoardNode from './features/board/components/BoardNode'
+import BoardViewport from './features/board/components/BoardViewport'
+import GroupOverlays from './features/board/components/GroupOverlays'
+import SelectionMarquee from './features/board/components/SelectionMarquee'
+import {
+  IMAGE_WIDTH,
+  MIN_IMAGE_WIDTH,
+  NOTE_DEFAULT_ASPECT,
+  START_X,
+  START_Y,
+  WORLD_ORIGIN,
+  WORLD_SIZE,
+} from './features/board/constants'
+import { getGroupBounds, getItemHeight, getItemRect, hasSameMembers } from './features/board/geometry'
+import { createMediaItemFromFile, extractDropSourceUrls, fileToDataUrl } from './features/board/media/io'
+import { applyActiveMediaFromItems, getMediaItemsForNode } from './features/board/media/nodeMedia'
+import { buildSnapshot, parseSnapshot } from './features/board/snapshot'
+import './features/board/styles/board.css'
+import type {
+  BoardImage,
+  GroupBounds,
+  GroupOverlayState,
+  InteractionState,
+  MarqueeState,
+  MediaTimeline,
+  MoveModeState,
+  NodeMediaItem,
+  PanState,
+  PersistedGroup,
+  PersistentGroupView,
+  PreparedMedia,
+  ScaleModeState,
+} from './features/board/types'
 
-type BoardImage = {
-  id: number
-  src: string
-  sourceDataUrl?: string
-  sourceUrl?: string
-  name: string
-  mediaKind: 'image' | 'video' | 'note'
-  isGif: boolean
-  paused: boolean
-  gifFreezeSrc?: string
-  mediaItems?: NodeMediaItem[]
-  activeMediaIndex?: number
-  slideshowPlaying?: boolean
-  noteMarkdown?: string
-  noteMode?: 'editing' | 'viewing'
-  x: number
-  y: number
-  width: number
-  aspect: number
-  z: number
+type GifFrameLike = CanvasImageSource & {
+  close?: () => void
+  codedHeight?: number
+  codedWidth?: number
+  displayHeight?: number
+  displayWidth?: number
 }
 
-type PreparedMedia = Pick<BoardImage, 'id' | 'src' | 'sourceDataUrl' | 'name' | 'mediaKind' | 'isGif' | 'paused' | 'z'>
-type NodeMediaItem = {
-  src: string
-  sourceDataUrl?: string
-  sourceUrl?: string
-  name: string
-  mediaKind: 'image' | 'video'
-  isGif: boolean
-}
-
-type SnapshotMedia = {
-  id: string
-  name: string
-  mediaKind: 'image' | 'video'
-  isGif: boolean
-  sourceDataUrl?: string
-  sourceUrl?: string
-}
-
-type SnapshotMediaNode = Pick<BoardImage, 'id' | 'paused' | 'x' | 'y' | 'width' | 'aspect' | 'z'> & {
-  kind: 'media'
-  mediaIds: string[]
-  activeMediaIndex: number
-  slideshowPlaying?: boolean
-}
-
-type SnapshotNoteNode = Pick<BoardImage, 'id' | 'x' | 'y' | 'width' | 'aspect' | 'z'> & {
-  kind: 'note'
-  name: string
-  noteMarkdown: string
-  noteMode: 'editing' | 'viewing'
-}
-
-type SnapshotNode = SnapshotMediaNode | SnapshotNoteNode
-
-type BoardSnapshotV4 = {
-  version: 4
-  createdAt: string
-  media: Record<string, SnapshotMedia>
-  nodes: SnapshotNode[]
-  groups: PersistedGroup[]
-  darkMode: boolean
-}
-
-type MediaTimeline = {
-  current: number
-  duration: number
-}
-
-type ItemRect = {
-  left: number
-  top: number
-  right: number
-  bottom: number
-}
-
-type GroupBounds = {
-  left: number
-  top: number
-  width: number
-  height: number
-}
-
-type GroupOverlayState = {
-  bounds: GroupBounds
-  active: boolean
-}
-
-type PersistedGroup = {
-  id: number
-  memberIds: number[]
-}
-
-type DragState = {
-  kind: 'move'
-  id: number
-  offsetX: number
-  offsetY: number
-}
-
-type ResizeState = {
-  kind: 'resize'
-  id: number
-  startWidth: number
-  startPointerX: number
-}
-
-type GroupMoveState = {
-  kind: 'move-group'
-  ids: number[]
-  startPointerX: number
-  startPointerY: number
-  startPositions: Record<number, { x: number; y: number }>
-}
-
-type GroupResizeState = {
-  kind: 'resize-group'
-  ids: number[]
-  startPointerX: number
-  startBounds: GroupBounds
-  startItems: Record<number, { x: number; y: number; width: number }>
-  minScale: number
-}
-
-type ExtractSlideState = {
-  kind: 'extract-slide'
-  sourceId: number
-  sourceRect: ItemRect
-  offsetX: number
-  offsetY: number
-  sourceWidth: number
-  sourceAspect: number
-  extractedIndex: number
-  extractedMedia: NodeMediaItem
-}
-
-type InteractionState = DragState | ResizeState | GroupMoveState | GroupResizeState | ExtractSlideState
-type ScaleModeState = {
-  ids: number[]
-  centerX: number
-  centerY: number
-  startDistance: number
-  previewScale: number
-  minScale: number
-  startItems: Record<number, { x: number; y: number; width: number }>
-}
-type MoveModeState = {
-  ids: number[]
-  startPointerX: number
-  startPointerY: number
-  offsetX: number
-  offsetY: number
-  startItems: Record<number, { x: number; y: number; width: number }>
-}
-
-type PanState = {
-  startClientX: number
-  startClientY: number
-  startScrollLeft: number
-  startScrollTop: number
-}
-
-type MarqueeState = {
-  startX: number
-  startY: number
-  currentX: number
-  currentY: number
-}
-
-const START_X = 100
-const START_Y = 100
-const IMAGE_WIDTH = 280
-const MIN_IMAGE_WIDTH = 80
-const NOTE_DEFAULT_ASPECT = 0.7
-const WORLD_SIZE = 120000
-const WORLD_ORIGIN = WORLD_SIZE / 2
-const CAPTION_HEIGHT = 22
-const CARD_BORDER_HEIGHT = 2
-const SELECTION_SHADER_FS = `
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-  vec2 uv = fragCoord / iResolution.xy;
-  vec2 p = uv * 2.0 - 1.0;
-  p.x *= iResolution.x / iResolution.y;
-
-  float r = length(p);
-  float edge = 1.0 - r;
-  float ring = smoothstep(0.22, 0.02, edge) * (1.0 - smoothstep(0.06, 0.0, edge));
-  float pulse = 0.65 + 0.35 * sin(iTime * 4.0);
-  float sweep = 0.5 + 0.5 * sin((uv.x + uv.y) * 18.0 - iTime * 6.5);
-  vec3 col = mix(vec3(0.08, 0.45, 1.0), vec3(0.35, 1.0, 1.0), sweep);
-  float alpha = ring * (0.55 + 0.45 * pulse);
-
-  fragColor = vec4(col, alpha);
-}
-`
-
-const getItemHeight = (item: BoardImage) => item.width * item.aspect + CAPTION_HEIGHT + CARD_BORDER_HEIGHT
-const getItemRect = (item: BoardImage): ItemRect => ({
-  left: item.x,
-  top: item.y,
-  right: item.x + item.width,
-  bottom: item.y + getItemHeight(item),
-})
-
-const getGroupBounds = (ids: number[], images: BoardImage[]): GroupBounds | null => {
-  const selected = images.filter((item) => ids.includes(item.id))
-  if (selected.length === 0) {
-    return null
-  }
-
-  let left = Number.POSITIVE_INFINITY
-  let top = Number.POSITIVE_INFINITY
-  let right = Number.NEGATIVE_INFINITY
-  let bottom = Number.NEGATIVE_INFINITY
-
-  for (const item of selected) {
-    const rect = getItemRect(item)
-    left = Math.min(left, rect.left)
-    top = Math.min(top, rect.top)
-    right = Math.max(right, rect.right)
-    bottom = Math.max(bottom, rect.bottom)
-  }
-
-  return {
-    left,
-    top,
-    width: right - left,
-    height: bottom - top,
-  }
-}
-
-const hasSameMembers = (a: number[], b: number[]) => {
-  if (a.length !== b.length) {
-    return false
-  }
-
-  const bSet = new Set(b)
-  return a.every((id) => bSet.has(id))
-}
-
-const fileToDataUrl = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-        return
-      }
-      reject(new Error(`Failed to read ${file.name}`))
-    }
-    reader.onerror = () => reject(reader.error ?? new Error(`Failed to read ${file.name}`))
-    reader.readAsDataURL(file)
-  })
-
-const normalizeHttpUrl = (raw: string) => {
-  const value = raw.trim()
-  if (!value) {
-    return null
-  }
-
-  try {
-    const parsed = new URL(value)
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return parsed.href
-    }
-  } catch {
-    return null
-  }
-
-  return null
-}
-
-const extractDropSourceUrls = (dataTransfer: DataTransfer) => {
-  const urls: string[] = []
-  const pushUrl = (candidate: string) => {
-    const normalized = normalizeHttpUrl(candidate)
-    if (normalized && !urls.includes(normalized)) {
-      urls.push(normalized)
+type GifDecoderLike = {
+  close?: () => void
+  decode: (options: { frameIndex: number }) => Promise<{ image: GifFrameLike }>
+  frameCount?: number
+  tracks?: {
+    ready?: Promise<unknown>
+    selectedTrack?: {
+      frameCount?: number
     }
   }
-
-  const uriList = dataTransfer.getData('text/uri-list')
-  if (uriList) {
-    for (const line of uriList.split('\n')) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith('#')) {
-        continue
-      }
-      pushUrl(trimmed)
-    }
-  }
-
-  const plain = dataTransfer.getData('text/plain')
-  if (plain) {
-    for (const token of plain.split(/\s+/)) {
-      pushUrl(token)
-    }
-  }
-
-  const html = dataTransfer.getData('text/html')
-  if (html) {
-    try {
-      const doc = new DOMParser().parseFromString(html, 'text/html')
-      for (const img of Array.from(doc.querySelectorAll('img[src]'))) {
-        pushUrl(img.getAttribute('src') ?? '')
-      }
-      for (const anchor of Array.from(doc.querySelectorAll('a[href]'))) {
-        pushUrl(anchor.getAttribute('href') ?? '')
-      }
-    } catch {
-      // Ignore malformed HTML snippets.
-    }
-  }
-
-  const downloadUrl = dataTransfer.getData('DownloadURL')
-  if (downloadUrl) {
-    const parts = downloadUrl.split(':')
-    if (parts.length >= 3) {
-      pushUrl(parts.slice(2).join(':'))
-    }
-  }
-
-  return urls
 }
 
-const escapeHtml = (value: string) =>
-  value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-
-const renderInlineMarkdown = (value: string) => {
-  let html = escapeHtml(value)
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
-  return html
-}
-
-const renderMarkdownToHtml = (markdown: string) => {
-  const lines = markdown.replaceAll('\r\n', '\n').split('\n')
-  const output: string[] = []
-  let inList = false
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed === '') {
-      if (inList) {
-        output.push('</ul>')
-        inList = false
-      }
-      continue
-    }
-
-    const heading = trimmed.match(/^(#{1,6})\s+(.*)$/)
-    if (heading) {
-      if (inList) {
-        output.push('</ul>')
-        inList = false
-      }
-      const level = heading[1].length
-      output.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`)
-      continue
-    }
-
-    const listItem = trimmed.match(/^-\s+(.*)$/)
-    if (listItem) {
-      if (!inList) {
-        output.push('<ul>')
-        inList = true
-      }
-      output.push(`<li>${renderInlineMarkdown(listItem[1])}</li>`)
-      continue
-    }
-
-    if (inList) {
-      output.push('</ul>')
-      inList = false
-    }
-
-    output.push(`<p>${renderInlineMarkdown(trimmed)}</p>`)
-  }
-
-  if (inList) {
-    output.push('</ul>')
-  }
-
-  return output.join('')
-}
-
-const getActiveMediaItem = (item: BoardImage) => {
-  const mediaItems = item.mediaItems
-  if (!mediaItems || mediaItems.length === 0) {
-    return null
-  }
-
-  const index = Math.max(0, Math.min(item.activeMediaIndex ?? 0, mediaItems.length - 1))
-  return { index, media: mediaItems[index] }
-}
-
-const applyActiveMediaFromItems = (item: BoardImage): BoardImage => {
-  const active = getActiveMediaItem(item)
-  if (!active) {
-    return item
-  }
-
-  return {
-    ...item,
-    activeMediaIndex: active.index,
-    src: active.media.sourceUrl || active.media.sourceDataUrl || '',
-    sourceDataUrl: active.media.sourceDataUrl,
-    sourceUrl: active.media.sourceUrl,
-    name: active.media.name,
-    mediaKind: active.media.mediaKind,
-    isGif: active.media.isGif,
-  }
-}
-
-const getMediaItemsForNode = (item: BoardImage): NodeMediaItem[] => {
-  if (item.mediaKind === 'note') {
-    return []
-  }
-
-  if (item.mediaItems && item.mediaItems.length > 0) {
-    return item.mediaItems
-  }
-
-  return [
-    {
-      src: item.src,
-      sourceDataUrl: item.sourceDataUrl,
-      sourceUrl: item.sourceUrl,
-      name: item.name,
-      mediaKind: item.mediaKind,
-      isGif: item.isGif,
-    },
-  ]
-}
+type GifDecoderCtor = new (options: { data: Blob; type: string }) => GifDecoderLike
 
 function App() {
   const [images, setImages] = useState<BoardImage[]>([])
-  const [darkMode, setDarkMode] = useState(false)
+  const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem('pureref-lite-theme') === 'dark')
   const [interaction, setInteraction] = useState<InteractionState | null>(null)
   const [scaleMode, setScaleMode] = useState<ScaleModeState | null>(null)
   const [moveMode, setMoveMode] = useState<MoveModeState | null>(null)
@@ -477,7 +87,7 @@ function App() {
   const nextIdRef = useRef(1)
   const nextGroupIdRef = useRef(1)
   const nextZRef = useRef(1)
-  const gifDecoderCacheRef = useRef<Record<number, { decoder: any; frameCount: number }>>({})
+  const gifDecoderCacheRef = useRef<Record<number, { decoder: GifDecoderLike; frameCount: number }>>({})
   const groupFadeTimeoutRef = useRef<number | null>(null)
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({})
   const pendingVideoSeekRef = useRef<Record<number, number>>({})
@@ -486,9 +96,34 @@ function App() {
   const slideshowTimersRef = useRef<Record<number, number>>({})
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
-  const persistentGroupViews = useMemo(
+  const effectiveSeekPanelId = useMemo(
+    () => (seekPanelId !== null && images.some((item) => item.id === seekPanelId) ? seekPanelId : null),
+    [images, seekPanelId],
+  )
+  const activeBrokenMediaIds = useMemo(() => {
+    const validIds = new Set(images.map((item) => item.id))
+    const next: Record<number, true> = {}
+    for (const key of Object.keys(brokenMediaIds)) {
+      const id = Number(key)
+      if (validIds.has(id)) {
+        next[id] = true
+      }
+    }
+    return next
+  }, [brokenMediaIds, images])
+  const activeGroups = useMemo(
     () =>
       groups
+        .map((group) => ({
+          ...group,
+          memberIds: group.memberIds.filter((id) => images.some((item) => item.id === id)),
+        }))
+        .filter((group) => group.memberIds.length > 1),
+    [groups, images],
+  )
+  const persistentGroupViews = useMemo(
+    () =>
+      activeGroups
         .map((group) => {
           const bounds = getGroupBounds(group.memberIds, images)
           return bounds
@@ -499,13 +134,14 @@ function App() {
               }
             : null
         })
-        .filter((value): value is { id: number; memberIds: number[]; bounds: GroupBounds } => value !== null),
-    [groups, images],
+        .filter((value): value is PersistentGroupView => value !== null),
+    [activeGroups, images],
   )
 
   useEffect(() => {
+    const decoderCache = gifDecoderCacheRef.current
     return () => {
-      for (const entry of Object.values(gifDecoderCacheRef.current)) {
+      for (const entry of Object.values(decoderCache)) {
         if (entry?.decoder && typeof entry.decoder.close === 'function') {
           entry.decoder.close()
         }
@@ -609,45 +245,8 @@ function App() {
   }
 
   useEffect(() => {
-    if (seekPanelId !== null && !images.some((item) => item.id === seekPanelId)) {
-      setSeekPanelId(null)
-    }
-  }, [images, seekPanelId])
-
-  useEffect(() => {
-    const savedTheme = window.localStorage.getItem('pureref-lite-theme')
-    if (savedTheme === 'dark') {
-      setDarkMode(true)
-    }
-  }, [])
-
-  useEffect(() => {
     window.localStorage.setItem('pureref-lite-theme', darkMode ? 'dark' : 'light')
   }, [darkMode])
-
-  useEffect(() => {
-    const imageIdSet = new Set(images.map((item) => item.id))
-    setGroups((current) => {
-      let changed = false
-      const next = current
-        .map((group) => {
-          const memberIds = group.memberIds.filter((id) => imageIdSet.has(id))
-          if (memberIds.length !== group.memberIds.length) {
-            changed = true
-          }
-          return { ...group, memberIds }
-        })
-        .filter((group) => {
-          if (group.memberIds.length > 1) {
-            return true
-          }
-          changed = true
-          return false
-        })
-
-      return changed ? next : current
-    })
-  }, [images])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -674,22 +273,81 @@ function App() {
     }
   }, [])
 
-  useEffect(() => {
-    const validIds = new Set(images.map((item) => item.id))
+  function advanceMediaForNodeIds(nodeIds: number[], direction: 1 | -1) {
+    if (nodeIds.length === 0) {
+      return
+    }
+
+    const nodeIdSet = new Set(nodeIds)
+    setImages((current) =>
+      current.map((item) => {
+        if (!nodeIdSet.has(item.id) || !item.mediaItems || item.mediaItems.length < 2) {
+          return item
+        }
+
+        const nextIndex =
+          (Math.max(0, Math.min(item.activeMediaIndex ?? 0, item.mediaItems.length - 1)) +
+            direction +
+            item.mediaItems.length) %
+          item.mediaItems.length
+
+        const next = applyActiveMediaFromItems({
+          ...item,
+          activeMediaIndex: nextIndex,
+          paused: false,
+          gifFreezeSrc: undefined,
+        })
+
+        return {
+          ...next,
+          aspect: item.aspect,
+        }
+      }),
+    )
+
     setBrokenMediaIds((current) => {
       let changed = false
-      const next: Record<number, true> = {}
-      for (const key of Object.keys(current)) {
-        const id = Number(key)
-        if (validIds.has(id)) {
-          next[id] = true
-        } else {
+      const next = { ...current }
+      for (const id of nodeIds) {
+        if (next[id]) {
+          delete next[id]
           changed = true
         }
       }
       return changed ? next : current
     })
-  }, [images])
+
+    setSeekPanelId((current) => (current !== null && nodeIdSet.has(current) ? null : current))
+  }
+
+  async function ensureGifDecoder(item: BoardImage) {
+    const cached = gifDecoderCacheRef.current[item.id]
+    if (cached) {
+      return cached
+    }
+
+    const DecoderCtor = (window as unknown as { ImageDecoder?: GifDecoderCtor }).ImageDecoder
+    if (!DecoderCtor) {
+      return null
+    }
+
+    try {
+      const response = await fetch(item.src)
+      const blob = await response.blob()
+      const decoder = new DecoderCtor({ data: blob, type: 'image/gif' })
+      if (decoder.tracks?.ready) {
+        await decoder.tracks.ready
+      }
+
+      const frameCount = decoder.tracks?.selectedTrack?.frameCount ?? decoder.frameCount ?? 1
+      const result = { decoder, frameCount: Math.max(1, frameCount) }
+      gifDecoderCacheRef.current[item.id] = result
+      setGifFrameCounts((current) => ({ ...current, [item.id]: result.frameCount }))
+      return result
+    } catch {
+      return null
+    }
+  }
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1085,7 +743,7 @@ function App() {
 
   useEffect(() => {
     const activeGroupIds = selectedIds.filter((id) => images.some((item) => item.id === id))
-    const selectionAlreadyPersisted = groups.some((group) => hasSameMembers(group.memberIds, activeGroupIds))
+    const selectionAlreadyPersisted = activeGroups.some((group) => hasSameMembers(group.memberIds, activeGroupIds))
     if (activeGroupIds.length > 1 && !selectionAlreadyPersisted) {
       const bounds = getGroupBounds(activeGroupIds, images)
       if (!bounds) {
@@ -1097,27 +755,31 @@ function App() {
         groupFadeTimeoutRef.current = null
       }
 
-      setGroupOverlay({ bounds, active: true })
+      window.setTimeout(() => {
+        setGroupOverlay({ bounds, active: true })
+      }, 0)
       return
     }
 
-    setGroupOverlay((current) => {
-      if (!current || !current.active) {
-        return current
-      }
+    window.setTimeout(() => {
+      setGroupOverlay((current) => {
+        if (!current || !current.active) {
+          return current
+        }
 
-      if (groupFadeTimeoutRef.current !== null) {
-        window.clearTimeout(groupFadeTimeoutRef.current)
-      }
+        if (groupFadeTimeoutRef.current !== null) {
+          window.clearTimeout(groupFadeTimeoutRef.current)
+        }
 
-      groupFadeTimeoutRef.current = window.setTimeout(() => {
-        setGroupOverlay(null)
-        groupFadeTimeoutRef.current = null
-      }, 180)
+        groupFadeTimeoutRef.current = window.setTimeout(() => {
+          setGroupOverlay(null)
+          groupFadeTimeoutRef.current = null
+        }, 180)
 
-      return { ...current, active: false }
-    })
-  }, [selectedIds, images, groups])
+        return { ...current, active: false }
+      })
+    }, 0)
+  }, [selectedIds, images, activeGroups])
 
   const getBoardPointer = (event: ReactPointerEvent) => {
     return getBoardPointFromClient(event.clientX, event.clientY)
@@ -1203,24 +865,6 @@ function App() {
       const newIds = prepared.map((item) => item.id)
       setSelectedIds(newIds)
       setSelectedId(newIds[newIds.length - 1])
-    }
-  }
-
-  const createMediaItemFromFile = async (file: File, sourceUrl?: string): Promise<NodeMediaItem | null> => {
-    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
-      return null
-    }
-
-    const dataUrl = await fileToDataUrl(file)
-    const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')
-
-    return {
-      src: sourceUrl || dataUrl,
-      sourceDataUrl: dataUrl,
-      sourceUrl,
-      name: file.name,
-      mediaKind: file.type.startsWith('video/') ? 'video' : 'image',
-      isGif,
     }
   }
 
@@ -1385,53 +1029,6 @@ function App() {
     )
   }
 
-  const advanceMediaForNodeIds = (nodeIds: number[], direction: 1 | -1) => {
-    if (nodeIds.length === 0) {
-      return
-    }
-
-    const nodeIdSet = new Set(nodeIds)
-    setImages((current) =>
-      current.map((item) => {
-        if (!nodeIdSet.has(item.id) || !item.mediaItems || item.mediaItems.length < 2) {
-          return item
-        }
-
-        const nextIndex =
-          (Math.max(0, Math.min(item.activeMediaIndex ?? 0, item.mediaItems.length - 1)) +
-            direction +
-            item.mediaItems.length) %
-          item.mediaItems.length
-
-        const next = applyActiveMediaFromItems({
-          ...item,
-          activeMediaIndex: nextIndex,
-          paused: false,
-          gifFreezeSrc: undefined,
-        })
-
-        return {
-          ...next,
-          aspect: item.aspect,
-        }
-      }),
-    )
-
-    setBrokenMediaIds((current) => {
-      let changed = false
-      const next = { ...current }
-      for (const id of nodeIds) {
-        if (next[id]) {
-          delete next[id]
-          changed = true
-        }
-      }
-      return changed ? next : current
-    })
-
-    setSeekPanelId((current) => (current !== null && nodeIdSet.has(current) ? null : current))
-  }
-
   const handleBoardDrop = (event: ReactDragEvent<HTMLDivElement>) => {
     event.preventDefault()
 
@@ -1497,86 +1094,7 @@ function App() {
   }
 
   const saveVersion = () => {
-    const media: Record<string, SnapshotMedia> = {}
-    const mediaIdBySignature = new Map<string, string>()
-    const nodes: SnapshotNode[] = images.map((image) => {
-      if (image.mediaKind === 'note') {
-        return {
-          kind: 'note',
-          id: image.id,
-          name: image.name,
-          noteMarkdown: image.noteMarkdown ?? '',
-          noteMode: image.noteMode === 'editing' ? 'editing' : 'viewing',
-          x: image.x,
-          y: image.y,
-          width: image.width,
-          aspect: image.aspect,
-          z: image.z,
-        }
-      }
-
-      const mediaItems =
-        image.mediaItems && image.mediaItems.length > 0
-          ? image.mediaItems
-          : [
-              {
-                src: image.src,
-                sourceDataUrl: image.sourceDataUrl,
-                sourceUrl: image.sourceUrl,
-                name: image.name,
-                mediaKind: image.mediaKind,
-                isGif: image.isGif,
-              },
-            ]
-
-      const mediaIds: string[] = mediaItems.map((mediaItem) => {
-        const sourceDataUrl = mediaItem.sourceDataUrl || mediaItem.src
-        const hasSource = typeof mediaItem.sourceUrl === 'string' && mediaItem.sourceUrl.length > 0
-        const signature = hasSource
-          ? `${mediaItem.mediaKind}:source:${mediaItem.isGif ? '1' : '0'}:${mediaItem.sourceUrl}`
-          : `${mediaItem.mediaKind}:data:${mediaItem.isGif ? '1' : '0'}:${sourceDataUrl}`
-
-        let mediaId = mediaIdBySignature.get(signature)
-        if (!mediaId) {
-          mediaId = `m${mediaIdBySignature.size + 1}`
-          mediaIdBySignature.set(signature, mediaId)
-          media[mediaId] = {
-            id: mediaId,
-            name: mediaItem.name,
-            mediaKind: mediaItem.mediaKind,
-            isGif: mediaItem.isGif,
-            sourceDataUrl: hasSource ? undefined : sourceDataUrl,
-            sourceUrl: hasSource ? mediaItem.sourceUrl : undefined,
-          }
-        }
-
-        return mediaId
-      })
-
-      return {
-        kind: 'media',
-        id: image.id,
-        mediaIds,
-        activeMediaIndex: Math.max(0, Math.min(image.activeMediaIndex ?? 0, mediaIds.length - 1)),
-        slideshowPlaying: Boolean(image.slideshowPlaying),
-        paused: image.paused,
-        x: image.x,
-        y: image.y,
-        width: image.width,
-        aspect: image.aspect,
-        z: image.z,
-      }
-    })
-
-    const snapshot: BoardSnapshotV4 = {
-      version: 4,
-      createdAt: new Date().toISOString(),
-      media,
-      nodes,
-      groups: groups.map((group) => ({ id: group.id, memberIds: [...group.memberIds] })),
-      darkMode,
-    }
-
+    const snapshot = buildSnapshot(images, activeGroups, darkMode)
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' })
     const href = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -1593,128 +1111,11 @@ function App() {
     }
 
     try {
-      const text = await file.text()
-      const parsed = JSON.parse(text) as Partial<BoardSnapshotV4>
-      if (!parsed || parsed.version !== 4 || !parsed.media || !Array.isArray(parsed.nodes)) {
-        throw new Error('Unsupported snapshot format')
-      }
+      const snapshotState = parseSnapshot(await file.text())
 
-      const mediaMap = parsed.media as Record<string, Partial<SnapshotMedia>>
-      const loadedImages: BoardImage[] = parsed.nodes
-        .map((node) => {
-          if (
-            typeof node?.id !== 'number' ||
-            typeof node?.x !== 'number' ||
-            typeof node?.y !== 'number' ||
-            typeof node?.width !== 'number' ||
-            typeof node?.aspect !== 'number' ||
-            typeof node?.z !== 'number'
-          ) {
-            return null
-          }
-
-          if (node.kind === 'note') {
-            if (typeof node.name !== 'string' || typeof node.noteMarkdown !== 'string') {
-              return null
-            }
-
-            return {
-              id: node.id,
-              src: '',
-              sourceDataUrl: '',
-              name: node.name,
-              mediaKind: 'note' as const,
-              isGif: false,
-              paused: false,
-              noteMarkdown: node.noteMarkdown,
-              noteMode: node.noteMode === 'editing' ? 'editing' : 'viewing',
-              x: node.x,
-              y: node.y,
-              width: Math.max(MIN_IMAGE_WIDTH, node.width),
-              aspect: node.aspect > 0 ? node.aspect : NOTE_DEFAULT_ASPECT,
-              z: node.z,
-            }
-          }
-
-          if (node.kind !== 'media' || !Array.isArray(node.mediaIds)) {
-            return null
-          }
-
-          const mediaItems = node.mediaIds
-            .map((mediaId) => mediaMap[mediaId])
-            .filter((mediaEntry): mediaEntry is Partial<SnapshotMedia> => Boolean(mediaEntry))
-            .map((mediaEntry) => {
-              if (
-                typeof mediaEntry.name !== 'string' ||
-                (mediaEntry.mediaKind !== 'image' && mediaEntry.mediaKind !== 'video')
-              ) {
-                return null
-              }
-
-              const preferredSrc =
-                typeof mediaEntry.sourceUrl === 'string' && mediaEntry.sourceUrl.length > 0
-                  ? mediaEntry.sourceUrl
-                  : typeof mediaEntry.sourceDataUrl === 'string'
-                    ? mediaEntry.sourceDataUrl
-                    : ''
-
-              const nextItem: NodeMediaItem = {
-                src: preferredSrc,
-                sourceDataUrl: typeof mediaEntry.sourceDataUrl === 'string' ? mediaEntry.sourceDataUrl : undefined,
-                sourceUrl: typeof mediaEntry.sourceUrl === 'string' ? mediaEntry.sourceUrl : undefined,
-                name: mediaEntry.name,
-                mediaKind: mediaEntry.mediaKind,
-                isGif: Boolean(mediaEntry.isGif),
-              }
-              return nextItem
-            })
-            .filter((item): item is NodeMediaItem => item !== null)
-
-          if (mediaItems.length === 0) {
-            return null
-          }
-
-          const activeMediaIndex = Math.max(0, Math.min(node.activeMediaIndex ?? 0, mediaItems.length - 1))
-          const activeMedia = mediaItems[activeMediaIndex]
-
-          const nextImage: BoardImage = {
-            id: node.id,
-            src: activeMedia.src,
-            sourceDataUrl: activeMedia.sourceDataUrl,
-            sourceUrl: activeMedia.sourceUrl,
-            name: activeMedia.name,
-            mediaKind: activeMedia.mediaKind,
-            isGif: activeMedia.isGif,
-            mediaItems,
-            activeMediaIndex,
-            slideshowPlaying: Boolean(node.slideshowPlaying),
-            paused: Boolean(node.paused),
-            x: node.x,
-            y: node.y,
-            width: Math.max(MIN_IMAGE_WIDTH, node.width),
-            aspect: node.aspect > 0 ? node.aspect : 1,
-            z: node.z,
-          }
-
-          return nextImage
-        })
-        .filter((item): item is BoardImage => item !== null)
-
-      const validIds = new Set(loadedImages.map((item) => item.id))
-      const loadedGroups = Array.isArray(parsed.groups)
-        ? parsed.groups
-            .map((group, index) => ({
-              id: typeof group?.id === 'number' ? group.id : index + 1,
-              memberIds: Array.isArray(group?.memberIds)
-                ? group.memberIds.filter((id): id is number => typeof id === 'number' && validIds.has(id))
-                : [],
-            }))
-            .filter((group) => group.memberIds.length > 1)
-        : []
-
-      setImages(loadedImages)
-      setGroups(loadedGroups)
-      setDarkMode(Boolean(parsed.darkMode))
+      setImages(snapshotState.loadedImages)
+      setGroups(snapshotState.loadedGroups)
+      setDarkMode(snapshotState.darkMode)
       setSelectedId(null)
       setSelectedIds([])
       setSeekPanelId(null)
@@ -1729,12 +1130,9 @@ function App() {
       setGifSeekFrames({})
       setBrokenMediaIds({})
 
-      const maxImageId = loadedImages.reduce((max, item) => Math.max(max, item.id), 0)
-      const maxZ = loadedImages.reduce((max, item) => Math.max(max, item.z), 0)
-      const maxGroupId = loadedGroups.reduce((max, group) => Math.max(max, group.id), 0)
-      nextIdRef.current = maxImageId + 1
-      nextZRef.current = maxZ + 1
-      nextGroupIdRef.current = maxGroupId + 1
+      nextIdRef.current = snapshotState.nextId
+      nextZRef.current = snapshotState.nextZ
+      nextGroupIdRef.current = snapshotState.nextGroupId
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to load snapshot'
       window.alert(`Unable to load version: ${message}`)
@@ -1959,35 +1357,6 @@ function App() {
     })
 
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-  }
-
-  const ensureGifDecoder = async (item: BoardImage) => {
-    const cached = gifDecoderCacheRef.current[item.id]
-    if (cached) {
-      return cached
-    }
-
-    const DecoderCtor = (window as any).ImageDecoder
-    if (!DecoderCtor) {
-      return null
-    }
-
-    try {
-      const response = await fetch(item.src)
-      const blob = await response.blob()
-      const decoder = new DecoderCtor({ data: blob, type: 'image/gif' })
-      if (decoder.tracks?.ready) {
-        await decoder.tracks.ready
-      }
-
-      const frameCount = decoder.tracks?.selectedTrack?.frameCount ?? decoder.frameCount ?? 1
-      const result = { decoder, frameCount: Math.max(1, frameCount) }
-      gifDecoderCacheRef.current[item.id] = result
-      setGifFrameCounts((current) => ({ ...current, [item.id]: result.frameCount }))
-      return result
-    } catch {
-      return null
-    }
   }
 
   const decodeGifFrameToDataUrl = async (item: BoardImage, frameIndex: number) => {
@@ -2547,58 +1916,37 @@ function App() {
 
   return (
     <main className={`app-shell ${darkMode ? 'dark' : ''}`}>
-      <header className="toolbar">
-        <label className="add-button" htmlFor="image-picker">
-          Add Images
-        </label>
-        <input
-          id="image-picker"
-          type="file"
-          accept="image/*,video/*"
-          multiple
-          onChange={(event) => {
-            void handleFiles(event.target.files)
-            event.currentTarget.value = ''
-          }}
-        />
-        <button type="button" onClick={saveVersion}>
-          Save Version
-        </button>
-        <button type="button" onClick={addNote}>
-          Add Note
-        </button>
-        <label className="add-button" htmlFor="version-picker">
-          Load Version
-        </label>
-        <input
-          id="version-picker"
-          type="file"
-          accept="application/json,.json"
-          onChange={(event) => {
-            void loadVersion(event.target.files)
-            event.currentTarget.value = ''
-          }}
-        />
-        <button type="button" onClick={centerView}>
-          Reset View
-        </button>
-        <button type="button" className="danger" onClick={clearBoard}>
-          Clear Board
-        </button>
-        <button type="button" onClick={() => setDarkMode((current) => !current)}>
-          {darkMode ? 'Light Mode' : 'Dark Mode'}
-        </button>
-        <span className="meta">{images.length} image(s)</span>
-        <span className="meta">Selection FX: {enableSelectionShader ? 'Shader' : 'Fallback'}</span>
-      </header>
+      <AppToolbar
+        darkMode={darkMode}
+        imageCount={images.length}
+        enableSelectionShader={enableSelectionShader}
+        onAddFiles={(files) => {
+          void handleFiles(files)
+        }}
+        onSaveVersion={saveVersion}
+        onAddNote={addNote}
+        onLoadVersion={(files) => {
+          void loadVersion(files)
+        }}
+        onCenterView={centerView}
+        onClearBoard={clearBoard}
+        onToggleDarkMode={() => {
+          setDarkMode((current) => !current)
+        }}
+      />
 
-      <section
-        className={`board-wrap ${pan ? 'panning' : ''} ${scaleMode ? 'scale-mode' : ''} ${moveMode ? 'move-mode' : ''}`}
-        ref={boardWrapRef}
+      <BoardViewport
+        boardRef={boardRef}
+        boardWrapRef={boardWrapRef}
+        boardWidth={WORLD_SIZE}
+        boardHeight={WORLD_SIZE}
+        isPanning={Boolean(pan)}
+        isScaleMode={Boolean(scaleMode)}
+        isMoveMode={Boolean(moveMode)}
         onContextMenu={(event) => {
           event.preventDefault()
         }}
-        onPointerDown={(event) => {
+        onWrapPointerDown={(event) => {
           if (event.button === 0 && (scaleMode || moveMode)) {
             event.preventDefault()
             applyTransformMode()
@@ -2632,551 +1980,298 @@ function App() {
         onPointerMove={onPointerMove}
         onPointerUp={stopDrag}
         onPointerCancel={stopDrag}
+        onBoardDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
+          const types = event.dataTransfer.types
+          if (
+            types.includes('Files') ||
+            types.includes('text/uri-list') ||
+            types.includes('text/plain') ||
+            types.includes('text/html') ||
+            types.includes('DownloadURL')
+          ) {
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'copy'
+          }
+        }}
+        onBoardDrop={(event: ReactDragEvent<HTMLDivElement>) => {
+          handleBoardDrop(event)
+        }}
+        onBoardPointerDown={(event) => {
+          if (event.button === 0 && (scaleMode || moveMode)) {
+            event.preventDefault()
+            applyTransformMode()
+            return
+          }
+
+          if (event.target !== event.currentTarget || event.button !== 0) {
+            return
+          }
+
+          const point = getBoardPointer(event)
+          if (!point) {
+            return
+          }
+
+          if (event.ctrlKey) {
+            setMarquee({
+              startX: point.x,
+              startY: point.y,
+              currentX: point.x,
+              currentY: point.y,
+            })
+            ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+            return
+          }
+
+          setSelectedId(null)
+          setSelectedIds([])
+        }}
       >
-        <div
-          className="board"
-          ref={boardRef}
-          onDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
-            const types = event.dataTransfer.types
-            if (
-              types.includes('Files') ||
-              types.includes('text/uri-list') ||
-              types.includes('text/plain') ||
-              types.includes('text/html') ||
-              types.includes('DownloadURL')
-            ) {
-              event.preventDefault()
-              event.dataTransfer.dropEffect = 'copy'
-            }
-          }}
-          onDrop={(event: ReactDragEvent<HTMLDivElement>) => {
-            handleBoardDrop(event)
-          }}
-          onPointerDown={(event) => {
-            if (event.button === 0 && (scaleMode || moveMode)) {
-              event.preventDefault()
-              applyTransformMode()
-              return
-            }
+        {images.map((image) => {
+          const activeScaleMode = scaleMode
+          const activeMoveMode = moveMode
+          const scalePreview = activeScaleMode?.startItems[image.id]
+          const movePreview = activeMoveMode?.startItems[image.id]
+          let displayX = image.x
+          let displayY = image.y
+          let displayWidth = image.width
 
-            if (event.target !== event.currentTarget || event.button !== 0) {
-              return
-            }
+          if (activeScaleMode && scalePreview) {
+            displayX = activeScaleMode.centerX + (scalePreview.x - activeScaleMode.centerX) * activeScaleMode.previewScale
+            displayY = activeScaleMode.centerY + (scalePreview.y - activeScaleMode.centerY) * activeScaleMode.previewScale
+            displayWidth = Math.max(MIN_IMAGE_WIDTH, scalePreview.width * activeScaleMode.previewScale)
+          } else if (activeMoveMode && movePreview) {
+            displayX = movePreview.x + activeMoveMode.offsetX
+            displayY = movePreview.y + activeMoveMode.offsetY
+          }
 
-            const point = getBoardPointer(event)
-            if (!point) {
-              return
-            }
-
-            if (event.ctrlKey) {
-              setMarquee({
-                startX: point.x,
-                startY: point.y,
-                currentX: point.x,
-                currentY: point.y,
-              })
-              ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-              return
-            }
-
-            setSelectedId(null)
-            setSelectedIds([])
-          }}
-          style={{ width: `${WORLD_SIZE}px`, height: `${WORLD_SIZE}px` }}
-        >
-          {images.map((image) => (
-            (() => {
-              const scalePreview = scaleMode ? scaleMode.startItems[image.id] : null
-              const movePreview = moveMode ? moveMode.startItems[image.id] : null
-              const displayX = scalePreview
-                ? scaleMode!.centerX + (scalePreview.x - scaleMode!.centerX) * scaleMode!.previewScale
-                : movePreview
-                  ? movePreview.x + moveMode!.offsetX
-                  : image.x
-              const displayY = scalePreview
-                ? scaleMode!.centerY + (scalePreview.y - scaleMode!.centerY) * scaleMode!.previewScale
-                : movePreview
-                  ? movePreview.y + moveMode!.offsetY
-                  : image.y
-              const displayWidth = scalePreview ? Math.max(MIN_IMAGE_WIDTH, scalePreview.width * scaleMode!.previewScale) : image.width
-              const isMediaStack = image.mediaKind !== 'note' && (image.mediaItems?.length ?? 0) > 1
-              const displayImageSrc = image.isGif && image.paused && image.gifFreezeSrc ? image.gifFreezeSrc : image.src
-              const shouldUseBlurBg = isMediaStack && image.mediaKind === 'image' && !image.isGif
-
-              return (
-            <figure
+          return (
+            <BoardNode
               key={image.id}
-              className={`board-image node-shell ${selectedSet.has(image.id) ? 'selected is-selected' : ''} ${image.mediaKind === 'note' ? 'note-node' : ''} ${isMediaStack ? 'media-stack-node' : ''}`}
-              style={{
-                transform: `translate(${displayX + WORLD_ORIGIN}px, ${displayY + WORLD_ORIGIN}px)`,
-                width: `${displayWidth}px`,
-                height:
-                  image.mediaKind === 'note'
-                    ? `${displayWidth * image.aspect + CAPTION_HEIGHT + CARD_BORDER_HEIGHT}px`
-                    : undefined,
-                zIndex: image.z,
+              image={image}
+              selected={selectedSet.has(image.id)}
+              displayX={displayX}
+              displayY={displayY}
+              displayWidth={displayWidth}
+              broken={Boolean(activeBrokenMediaIds[image.id])}
+              enableSelectionShader={enableSelectionShader}
+              seekPanelOpen={effectiveSeekPanelId === image.id && (image.mediaKind === 'video' || image.isGif)}
+              videoTimeline={videoTimelines[image.id]}
+              gifFrameCount={gifFrameCounts[image.id] ?? 1}
+              gifSeekFrame={gifSeekFrames[image.id] ?? 0}
+              onPointerDown={onPointerDown}
+              onResizePointerDown={onResizePointerDown}
+              onDisableSelectionShader={() => {
+                setEnableSelectionShader(false)
               }}
-              onPointerDown={(event) => onPointerDown(event, image.id)}
-            >
-              {image.mediaKind === 'note' ? (
-                <div className="note-body node-body">
-                  {image.noteMode === 'editing' ? (
-                    <textarea
-                      className="note-editor"
-                      value={image.noteMarkdown ?? ''}
-                      onPointerDown={(event) => {
-                        event.stopPropagation()
-                      }}
-                      onFocus={() => {
-                        setIsEditorFocused(true)
-                      }}
-                      onBlur={() => {
-                        setIsEditorFocused(false)
-                      }}
-                      onChange={(event) => {
-                        const nextMarkdown = event.currentTarget.value
-                        setImages((current) =>
-                          current.map((item) =>
-                            item.id === image.id
-                              ? {
-                                  ...item,
-                                  noteMarkdown: nextMarkdown,
-                                }
-                              : item,
-                          ),
-                        )
-                      }}
-                    />
-                  ) : (
-                    <div
-                      className="note-markdown"
-                      dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(image.noteMarkdown ?? '') }}
-                    />
-                  )}
-                </div>
-              ) : brokenMediaIds[image.id] || !image.src ? (
-                <div
-                  className="broken-media"
-                  style={{ height: `${displayWidth * image.aspect}px` }}
-                  aria-label={`${image.name} failed to load`}
-                >
-                  <div className="broken-media-icon">!</div>
-                  <div className="broken-media-label">Media unavailable</div>
-                </div>
-              ) : image.mediaKind === 'video' ? (
-                <div className="media-frame node-body" style={{ height: `${displayWidth * image.aspect}px` }}>
-                  <video
-                    className="media-content"
-                    src={image.src}
-                    muted
-                    loop
-                    autoPlay
-                    playsInline
-                    preload="metadata"
-                    draggable={false}
-                    ref={(element) => {
-                      videoRefs.current[image.id] = element
-                    }}
-                    onLoadedMetadata={(event) => {
-                    setBrokenMediaIds((current) => {
-                      if (!current[image.id]) {
-                        return current
-                      }
-                      const next = { ...current }
-                      delete next[image.id]
-                      return next
-                    })
-
-                    const videoEl = event.currentTarget
-                    if (!videoEl.videoWidth || !videoEl.videoHeight) {
-                      return
-                    }
-
-                    const pendingSeekTime = pendingVideoSeekRef.current[image.id]
-                    if (pendingSeekTime !== undefined) {
-                      const safeDuration = Number.isFinite(videoEl.duration) ? videoEl.duration : pendingSeekTime
-                      videoEl.currentTime = Math.max(0, Math.min(pendingSeekTime, safeDuration))
-                      delete pendingVideoSeekRef.current[image.id]
-                    }
-
-                    const nextAspect = videoEl.videoHeight / videoEl.videoWidth
-                    const nextDuration = Number.isFinite(videoEl.duration) ? videoEl.duration : 0
-
-                    setVideoTimelines((current) => ({
-                      ...current,
-                      [image.id]: {
-                        current: videoEl.currentTime,
-                        duration: nextDuration,
-                      },
-                    }))
-                    setImages((current) =>
-                      current.map((item) => {
-                        if (item.id !== image.id) {
-                          return item
-                        }
-
-                        if ((item.mediaItems?.length ?? 0) > 1) {
-                          return item
-                        }
-
-                        if (Math.abs(item.aspect - nextAspect) < 0.001) {
-                          return item
-                        }
-
-                        return {
+              onNoteFocusChange={setIsEditorFocused}
+              onNoteMarkdownChange={(id, markdown) => {
+                setImages((current) =>
+                  current.map((item) =>
+                    item.id === id
+                      ? {
                           ...item,
-                          aspect: nextAspect,
+                          noteMarkdown: markdown,
                         }
-                      }),
-                    )
-                  }}
-                    onTimeUpdate={(event) => {
-                      const videoEl = event.currentTarget
-                      setVideoTimelines((current) => {
-                        const previous = current[image.id]
-                        const nextValue = {
-                          current: videoEl.currentTime,
-                          duration: Number.isFinite(videoEl.duration) ? videoEl.duration : previous?.duration ?? 0,
+                      : item,
+                  ),
+                )
+              }}
+              onToggleSlideshow={(id) => {
+                setImages((current) =>
+                  current.map((item) =>
+                    item.id === id
+                      ? {
+                          ...item,
+                          slideshowPlaying: !item.slideshowPlaying,
                         }
+                      : item,
+                  ),
+                )
+              }}
+              onToggleNoteMode={(id) => {
+                setImages((current) =>
+                  current.map((item) =>
+                    item.id === id
+                      ? {
+                          ...item,
+                          noteMode: item.noteMode === 'editing' ? 'viewing' : 'editing',
+                        }
+                      : item,
+                  ),
+                )
+              }}
+              setVideoRef={(id, element) => {
+                videoRefs.current[id] = element
+              }}
+              onVideoLoadedMetadata={(id, event) => {
+                setBrokenMediaIds((current) => {
+                  if (!current[id]) {
+                    return current
+                  }
+                  const next = { ...current }
+                  delete next[id]
+                  return next
+                })
 
-                        if (
-                          previous &&
-                          Math.abs(previous.current - nextValue.current) < 0.02 &&
-                          Math.abs(previous.duration - nextValue.duration) < 0.02
-                        ) {
-                          return current
-                        }
+                const videoEl = event.currentTarget
+                if (!videoEl.videoWidth || !videoEl.videoHeight) {
+                  return
+                }
 
-                        return {
-                          ...current,
-                          [image.id]: nextValue,
-                        }
-                      })
-                    }}
-                    onError={() => {
-                      fallbackNodeMediaToEmbeddedData(image.id)
-                      setBrokenMediaIds((current) => ({ ...current, [image.id]: true }))
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="media-frame node-body" style={{ height: `${displayWidth * image.aspect}px` }}>
-                  {shouldUseBlurBg && (
-                    <img
-                      className="media-bg-blur"
-                      src={displayImageSrc}
-                      alt=""
-                      draggable={false}
-                      aria-hidden="true"
-                    />
-                  )}
-                  <img
-                    className="media-content"
-                    src={displayImageSrc}
-                    alt={image.name}
-                    draggable={false}
-                    onLoad={(event) => {
-                    setBrokenMediaIds((current) => {
-                      if (!current[image.id]) {
-                        return current
-                      }
-                      const next = { ...current }
-                      delete next[image.id]
-                      return next
-                    })
+                const pendingSeekTime = pendingVideoSeekRef.current[id]
+                if (pendingSeekTime !== undefined) {
+                  const safeDuration = Number.isFinite(videoEl.duration) ? videoEl.duration : pendingSeekTime
+                  videoEl.currentTime = Math.max(0, Math.min(pendingSeekTime, safeDuration))
+                  delete pendingVideoSeekRef.current[id]
+                }
 
-                    const imgEl = event.currentTarget
-                    if (!imgEl.naturalWidth || !imgEl.naturalHeight) {
-                      return
+                const nextAspect = videoEl.videoHeight / videoEl.videoWidth
+                const nextDuration = Number.isFinite(videoEl.duration) ? videoEl.duration : 0
+
+                setVideoTimelines((current) => ({
+                  ...current,
+                  [id]: {
+                    current: videoEl.currentTime,
+                    duration: nextDuration,
+                  },
+                }))
+
+                setImages((current) =>
+                  current.map((item) => {
+                    if (item.id !== id) {
+                      return item
                     }
 
-                    const nextAspect = imgEl.naturalHeight / imgEl.naturalWidth
-                    setImages((current) =>
-                      current.map((item) => {
-                        if (item.id !== image.id) {
-                          return item
-                        }
+                    if ((item.mediaItems?.length ?? 0) > 1 || Math.abs(item.aspect - nextAspect) < 0.001) {
+                      return item
+                    }
 
-                        if ((item.mediaItems?.length ?? 0) > 1) {
-                          return item
-                        }
+                    return {
+                      ...item,
+                      aspect: nextAspect,
+                    }
+                  }),
+                )
+              }}
+              onVideoTimeUpdate={(id, event) => {
+                const videoEl = event.currentTarget
+                setVideoTimelines((current) => {
+                  const previous = current[id]
+                  const nextValue = {
+                    current: videoEl.currentTime,
+                    duration: Number.isFinite(videoEl.duration) ? videoEl.duration : previous?.duration ?? 0,
+                  }
 
-                        let didChange = false
-                        let nextItem = item
+                  if (
+                    previous &&
+                    Math.abs(previous.current - nextValue.current) < 0.02 &&
+                    Math.abs(previous.duration - nextValue.duration) < 0.02
+                  ) {
+                    return current
+                  }
 
-                        if (Math.abs(item.aspect - nextAspect) >= 0.001) {
+                  return {
+                    ...current,
+                    [id]: nextValue,
+                  }
+                })
+              }}
+              onMediaError={(id) => {
+                fallbackNodeMediaToEmbeddedData(id)
+                setBrokenMediaIds((current) => ({ ...current, [id]: true }))
+              }}
+              onImageLoad={(id, event) => {
+                setBrokenMediaIds((current) => {
+                  if (!current[id]) {
+                    return current
+                  }
+                  const next = { ...current }
+                  delete next[id]
+                  return next
+                })
+
+                const imgEl = event.currentTarget
+                if (!imgEl.naturalWidth || !imgEl.naturalHeight) {
+                  return
+                }
+
+                const nextAspect = imgEl.naturalHeight / imgEl.naturalWidth
+                setImages((current) =>
+                  current.map((item) => {
+                    if (item.id !== id) {
+                      return item
+                    }
+
+                    if ((item.mediaItems?.length ?? 0) > 1) {
+                      return item
+                    }
+
+                    let didChange = false
+                    let nextItem = item
+
+                    if (Math.abs(item.aspect - nextAspect) >= 0.001) {
+                      nextItem = {
+                        ...nextItem,
+                        aspect: nextAspect,
+                      }
+                      didChange = true
+                    }
+
+                    if (item.isGif && !item.gifFreezeSrc) {
+                      try {
+                        const canvas = document.createElement('canvas')
+                        canvas.width = imgEl.naturalWidth
+                        canvas.height = imgEl.naturalHeight
+                        const ctx = canvas.getContext('2d')
+                        if (ctx) {
+                          ctx.drawImage(imgEl, 0, 0)
                           nextItem = {
                             ...nextItem,
-                            aspect: nextAspect,
+                            gifFreezeSrc: canvas.toDataURL('image/png'),
                           }
                           didChange = true
                         }
-
-                        if (item.isGif && !item.gifFreezeSrc) {
-                          try {
-                            const canvas = document.createElement('canvas')
-                            canvas.width = imgEl.naturalWidth
-                            canvas.height = imgEl.naturalHeight
-                            const ctx = canvas.getContext('2d')
-                            if (ctx) {
-                              ctx.drawImage(imgEl, 0, 0)
-                              nextItem = {
-                                ...nextItem,
-                                gifFreezeSrc: canvas.toDataURL('image/png'),
-                              }
-                              didChange = true
-                            }
-                          } catch {
-                            // Ignore draw failures; GIF can still play normally.
-                          }
-                        }
-
-                        return didChange ? nextItem : item
-                      }),
-                    )
-                  }}
-                    onError={() => {
-                      fallbackNodeMediaToEmbeddedData(image.id)
-                      setBrokenMediaIds((current) => ({ ...current, [image.id]: true }))
-                    }}
-                  />
-                </div>
-              )}
-              {selectedSet.has(image.id) && (
-                <div className="shader-selection-layer node-selection-fx" aria-hidden="true">
-                  {enableSelectionShader && (
-                    <Shader
-                      fs={SELECTION_SHADER_FS}
-                      clearColor={[0, 0, 0, 0]}
-                      style={{ width: '100%', height: '100%' } as any}
-                      onError={(error) => {
-                        console.warn('Selection shader disabled:', error)
-                        setEnableSelectionShader(false)
-                      }}
-                      onWarning={(warning) => {
-                        if (warning) {
-                          console.warn('Selection shader warning:', warning)
-                        }
-                      }}
-                    />
-                  )}
-                </div>
-              )}
-              <figcaption className="node-footer">
-                <span className="caption-name">{image.name}</span>
-                {isMediaStack && (
-                  <span className="stack-count">
-                    {Math.max(0, Math.min(image.activeMediaIndex ?? 0, (image.mediaItems?.length ?? 1) - 1)) + 1}/
-                    {image.mediaItems?.length}
-                  </span>
-                )}
-                {isMediaStack && (
-                  <button
-                    type="button"
-                    className="slideshow-toggle"
-                    onPointerDown={(event) => {
-                      event.stopPropagation()
-                    }}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setImages((current) =>
-                        current.map((item) =>
-                          item.id === image.id
-                            ? {
-                                ...item,
-                                slideshowPlaying: !item.slideshowPlaying,
-                              }
-                            : item,
-                        ),
-                      )
-                    }}
-                    aria-label={`${image.slideshowPlaying ? 'Pause' : 'Play'} slideshow for ${image.name}`}
-                  >
-                    {image.slideshowPlaying ? 'Pause' : 'Play'}
-                  </button>
-                )}
-                {image.mediaKind === 'note' && (
-                  <button
-                    type="button"
-                    className="note-mode-toggle"
-                    onPointerDown={(event) => {
-                      event.stopPropagation()
-                    }}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setImages((current) =>
-                        current.map((item) =>
-                          item.id === image.id
-                            ? {
-                                ...item,
-                                noteMode: item.noteMode === 'editing' ? 'viewing' : 'editing',
-                              }
-                            : item,
-                        ),
-                      )
-                    }}
-                    aria-label={`${image.noteMode === 'editing' ? 'View' : 'Edit'} ${image.name}`}
-                  >
-                    {image.noteMode === 'editing' ? 'View' : 'Edit'}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="source-link"
-                  disabled={!image.sourceUrl}
-                  onPointerDown={(event) => {
-                    event.stopPropagation()
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    if (!image.sourceUrl) {
-                      return
+                      } catch {
+                        // Ignore draw failures; GIF can still play normally.
+                      }
                     }
-                    window.open(image.sourceUrl, '_blank', 'noopener,noreferrer')
-                  }}
-                  title={image.sourceUrl ?? 'No source available'}
-                  aria-label={`Open source for ${image.name}`}
-                >
-                  Source
-                </button>
-              </figcaption>
-              <button
-                type="button"
-                className="resize-handle"
-                onPointerDown={(event) => onResizePointerDown(event, image.id)}
-                aria-label={`Resize ${image.name}`}
-              />
-              {(seekPanelId === image.id && (image.mediaKind === 'video' || image.isGif)) && (
-                <div
-                  className="seek-panel open"
-                  onPointerDown={(event) => {
-                    event.stopPropagation()
-                  }}
-                >
-                  {image.mediaKind === 'video' ? (
-                    <>
-                      <div className="seek-panel-title">Video Seek</div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={Math.max(videoTimelines[image.id]?.duration ?? 0, 0.01)}
-                        step={0.01}
-                        value={Math.min(
-                          videoTimelines[image.id]?.current ?? 0,
-                          Math.max(videoTimelines[image.id]?.duration ?? 0, 0.01),
-                        )}
-                        onChange={(event) => {
-                          const nextTime = Number(event.currentTarget.value)
-                          const video = videoRefs.current[image.id]
-                          if (video) {
-                            video.currentTime = nextTime
-                          }
 
-                          setVideoTimelines((current) => ({
-                            ...current,
-                            [image.id]: {
-                              current: nextTime,
-                              duration: current[image.id]?.duration ?? video?.duration ?? 0,
-                            },
-                          }))
-                        }}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <div className="seek-panel-title">GIF Seek</div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={Math.max((gifFrameCounts[image.id] ?? 1) - 1, 0)}
-                        step={1}
-                        value={Math.min(gifSeekFrames[image.id] ?? 0, Math.max((gifFrameCounts[image.id] ?? 1) - 1, 0))}
-                        onChange={(event) => {
-                          const nextFrame = Number(event.currentTarget.value)
-                          void onGifSeek(image, nextFrame)
-                        }}
-                      />
-                    </>
-                  )}
-                </div>
-              )}
-            </figure>
-              )
-            })()
-          ))}
-
-          {persistentGroupViews.map((group) => (
-            <div
-              key={group.id}
-              className="group-container persistent"
-              style={{
-                left: `${group.bounds.left + WORLD_ORIGIN}px`,
-                top: `${group.bounds.top + WORLD_ORIGIN}px`,
-                width: `${group.bounds.width}px`,
-                height: `${group.bounds.height}px`,
+                    return didChange ? nextItem : item
+                  }),
+                )
               }}
-            >
-              <button
-                type="button"
-                className="group-move-handle persistent-group-handle"
-                onPointerDown={(event) => startGroupMove(event, group.memberIds)}
-                aria-label={`Move persistent group ${group.id}`}
-              >
-                Group ({group.memberIds.length})
-              </button>
-              <button
-                type="button"
-                className="group-resize-handle persistent-group-handle"
-                onPointerDown={(event) => startGroupResize(event, group.memberIds, group.bounds)}
-                aria-label={`Resize persistent group ${group.id}`}
-              />
-            </div>
-          ))}
+              onSeekVideo={(id, nextTime) => {
+                const video = videoRefs.current[id]
+                if (video) {
+                  video.currentTime = nextTime
+                }
 
-          {groupOverlay && (
-            <div
-              className={`group-container ${groupOverlay.active ? 'active' : 'inactive'}`}
-              style={{
-                left: `${groupOverlay.bounds.left + WORLD_ORIGIN}px`,
-                top: `${groupOverlay.bounds.top + WORLD_ORIGIN}px`,
-                width: `${groupOverlay.bounds.width}px`,
-                height: `${groupOverlay.bounds.height}px`,
+                setVideoTimelines((current) => ({
+                  ...current,
+                  [id]: {
+                    current: nextTime,
+                    duration: current[id]?.duration ?? video?.duration ?? 0,
+                  },
+                }))
               }}
-            >
-              {groupOverlay.active && (
-                <>
-                  <button
-                    type="button"
-                    className="group-move-handle"
-                    onPointerDown={onGroupMovePointerDown}
-                    aria-label="Move selected group"
-                  >
-                    Group ({selectedIds.length})
-                  </button>
-                  <button
-                    type="button"
-                    className="group-resize-handle"
-                    onPointerDown={onGroupResizePointerDown}
-                    aria-label="Resize selected group"
-                  />
-                </>
-              )}
-            </div>
-          )}
-
-          {marquee && (
-            <div
-              className="selection-marquee"
-              style={{
-                left: `${Math.min(marquee.startX, marquee.currentX) + WORLD_ORIGIN}px`,
-                top: `${Math.min(marquee.startY, marquee.currentY) + WORLD_ORIGIN}px`,
-                width: `${Math.abs(marquee.currentX - marquee.startX)}px`,
-                height: `${Math.abs(marquee.currentY - marquee.startY)}px`,
-              }}
+              onSeekGif={onGifSeek}
             />
-          )}
-        </div>
-      </section>
+          )
+        })}
+
+        <GroupOverlays
+          persistentGroups={persistentGroupViews}
+          groupOverlay={groupOverlay}
+          selectedCount={selectedIds.length}
+          onPersistentGroupMove={startGroupMove}
+          onPersistentGroupResize={startGroupResize}
+          onSelectedGroupMove={onGroupMovePointerDown}
+          onSelectedGroupResize={onGroupResizePointerDown}
+        />
+
+        {marquee && <SelectionMarquee marquee={marquee} />}
+      </BoardViewport>
     </main>
   )
 }
