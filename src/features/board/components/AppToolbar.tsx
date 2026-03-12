@@ -25,9 +25,6 @@ function AppToolbar({
 }: AppToolbarProps) {
   return (
     <header className="toolbar">
-      <label className="add-button" htmlFor="image-picker">
-        Add Images
-      </label>
       <input
         id="image-picker"
         type="file"
@@ -38,15 +35,6 @@ function AppToolbar({
           event.currentTarget.value = ''
         }}
       />
-      <button type="button" onClick={onSaveVersion}>
-        Save Version
-      </button>
-      <button type="button" onClick={onAddNote}>
-        Add Note
-      </button>
-      <label className="add-button" htmlFor="version-picker">
-        Load Version
-      </label>
       <input
         id="version-picker"
         type="file"
@@ -56,17 +44,50 @@ function AppToolbar({
           event.currentTarget.value = ''
         }}
       />
-      <button type="button" onClick={onCenterView}>
-        Reset View
-      </button>
-      <button type="button" className="danger" onClick={onClearBoard}>
-        Clear Board
-      </button>
-      <button type="button" onClick={onToggleDarkMode}>
-        {darkMode ? 'Light Mode' : 'Dark Mode'}
-      </button>
-      <span className="meta">{imageCount} image(s)</span>
-      <span className="meta">Selection FX: {enableSelectionShader ? 'Shader' : 'Fallback'}</span>
+
+      <div className="toolbar-logo" aria-label="App logo">
+        PureRef Lite
+      </div>
+
+      <nav className="menu-bar" aria-label="Board menu">
+        <details className="menu-group">
+          <summary className="menu-trigger">File</summary>
+          <div className="menu-panel" role="menu" aria-label="File menu">
+            <label className="menu-item" htmlFor="image-picker">
+              Add Images
+            </label>
+            <button type="button" className="menu-item" onClick={onAddNote}>
+              Add Note
+            </button>
+            <label className="menu-item" htmlFor="version-picker">
+              Load Canvas
+            </label>
+            <button type="button" className="menu-item" onClick={onSaveVersion}>
+              Save Canvas
+            </button>
+            <button type="button" className="menu-item danger" onClick={onClearBoard}>
+              Clear Board
+            </button>
+          </div>
+        </details>
+
+        <details className="menu-group">
+          <summary className="menu-trigger">View</summary>
+          <div className="menu-panel" role="menu" aria-label="View menu">
+            <button type="button" className="menu-item" onClick={onCenterView}>
+              Reset View
+            </button>
+            <button type="button" className="menu-item" onClick={onToggleDarkMode}>
+              {darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            </button>
+          </div>
+        </details>
+      </nav>
+
+      <div className="toolbar-meta">
+        <span className="meta">{imageCount} image(s)</span>
+        <span className="meta">Selection FX: {enableSelectionShader ? 'Shader' : 'Fallback'}</span>
+      </div>
     </header>
   )
 }
