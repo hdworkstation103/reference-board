@@ -4,6 +4,8 @@ type MediaBodyProps = {
   image: BoardImage
   displayWidth: number
   broken: boolean
+  mediaTransformCss: string
+  mediaTransformOrigin: string
   displayImageSrc: string
   shouldUseBlurBg: boolean
   setVideoRef: (element: HTMLVideoElement | null) => void
@@ -18,6 +20,8 @@ function MediaBody({
   image,
   displayWidth,
   broken,
+  mediaTransformCss,
+  mediaTransformOrigin,
   displayImageSrc,
   shouldUseBlurBg,
   setVideoRef,
@@ -53,6 +57,10 @@ function MediaBody({
           preload="metadata"
           draggable={false}
           ref={setVideoRef}
+          style={{
+            transform: mediaTransformCss,
+            transformOrigin: mediaTransformOrigin,
+          }}
           onLoadedMetadata={onVideoLoadedMetadata}
           onTimeUpdate={onVideoTimeUpdate}
           onError={onVideoError}
@@ -71,6 +79,10 @@ function MediaBody({
         src={displayImageSrc}
         alt={image.name}
         draggable={false}
+        style={{
+          transform: mediaTransformCss,
+          transformOrigin: mediaTransformOrigin,
+        }}
         onLoad={onImageLoad}
         onError={onImageError}
       />

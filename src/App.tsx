@@ -6,10 +6,12 @@ import {
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import type { CSSProperties } from 'react'
 import AppToolbar from './features/board/components/AppToolbar'
 import BoardNode from './features/board/components/BoardNode'
 import BoardViewport from './features/board/components/BoardViewport'
 import GroupOverlays from './features/board/components/GroupOverlays'
+import InspectorPanel from './features/board/components/InspectorPanel'
 import SelectionMarquee from './features/board/components/SelectionMarquee'
 import {
   IMAGE_WIDTH,
@@ -62,6 +64,27 @@ type GifDecoderLike = {
 }
 
 type GifDecoderCtor = new (options: { data: Blob; type: string }) => GifDecoderLike
+type MediaTransformSettings = {
+  flipHorizontal: boolean
+  translateX: number
+  translateY: number
+  scaleX: number
+  scaleY: number
+  rotateDeg: number
+  pivotX: number
+  pivotY: number
+}
+
+const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
+  flipHorizontal: false,
+  translateX: 0,
+  translateY: 0,
+  scaleX: 1,
+  scaleY: 1,
+  rotateDeg: 0,
+  pivotX: 50,
+  pivotY: 50,
+}
 
 function App() {
   const [images, setImages] = useState<BoardImage[]>([])
@@ -77,11 +100,14 @@ function App() {
   const [gifFrameCounts, setGifFrameCounts] = useState<Record<number, number>>({})
   const [gifSeekFrames, setGifSeekFrames] = useState<Record<number, number>>({})
   const [brokenMediaIds, setBrokenMediaIds] = useState<Record<number, true>>({})
+  const [mediaTransforms, setMediaTransforms] = useState<Record<number, MediaTransformSettings>>({})
   const [groups, setGroups] = useState<PersistedGroup[]>([])
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(null)
   const [isEditorFocused, setIsEditorFocused] = useState(false)
   const [enableSelectionShader, setEnableSelectionShader] = useState(true)
+  const [inspectorWidth, setInspectorWidth] = useState(300)
+  const [inspectorResize, setInspectorResize] = useState<{ startX: number; startWidth: number } | null>(null)
   const boardRef = useRef<HTMLDivElement | null>(null)
   const boardWrapRef = useRef<HTMLDivElement | null>(null)
   const nextIdRef = useRef(1)
@@ -111,6 +137,17 @@ function App() {
     }
     return next
   }, [brokenMediaIds, images])
+  const activeMediaTransforms = useMemo(() => {
+    const validIds = new Set(images.map((item) => item.id))
+    const next: Record<number, MediaTransformSettings> = {}
+    for (const key of Object.keys(mediaTransforms)) {
+      const id = Number(key)
+      if (validIds.has(id)) {
+        next[id] = mediaTransforms[id]
+      }
+    }
+    return next
+  }, [mediaTransforms, images])
   const activeGroups = useMemo(
     () =>
       groups
@@ -137,6 +174,92 @@ function App() {
         .filter((value): value is PersistentGroupView => value !== null),
     [activeGroups, images],
   )
+  const inspectorNode = useMemo(() => {
+    if (selectedId === null) {
+      return null
+    }
+
+    return images.find((item) => item.id === selectedId) ?? null
+  }, [images, selectedId])
+  const selectedNodeTransform = useMemo(() => {
+    if (!inspectorNode) {
+      return DEFAULT_MEDIA_TRANSFORM
+    }
+
+    return activeMediaTransforms[inspectorNode.id] ?? DEFAULT_MEDIA_TRANSFORM
+  }, [activeMediaTransforms, inspectorNode])
+  const appContentStyle = useMemo(
+    () =>
+      ({
+        '--inspector-width': `${inspectorWidth}px`,
+      }) as CSSProperties,
+    [inspectorWidth],
+  )
+
+  const getMediaTransformForNode = (id: number) => activeMediaTransforms[id] ?? DEFAULT_MEDIA_TRANSFORM
+  const getTransformOrigin = (settings: MediaTransformSettings) => `${settings.pivotX}% ${settings.pivotY}%`
+  const getTransformCss = (settings: MediaTransformSettings) => {
+    const scaleX = settings.flipHorizontal ? -settings.scaleX : settings.scaleX
+    return `translate(${settings.translateX}px, ${settings.translateY}px) rotate(${settings.rotateDeg}deg) scale(${scaleX}, ${settings.scaleY})`
+  }
+
+  const updateSelectedNodeTransform = (patch: Partial<MediaTransformSettings>) => {
+    if (!inspectorNode || inspectorNode.mediaKind === 'note') {
+      return
+    }
+
+    setMediaTransforms((current) => {
+      const currentSettings = current[inspectorNode.id] ?? DEFAULT_MEDIA_TRANSFORM
+      const nextSettings = {
+        ...currentSettings,
+        ...patch,
+      }
+
+      const isDefault =
+        nextSettings.flipHorizontal === DEFAULT_MEDIA_TRANSFORM.flipHorizontal &&
+        nextSettings.translateX === DEFAULT_MEDIA_TRANSFORM.translateX &&
+        nextSettings.translateY === DEFAULT_MEDIA_TRANSFORM.translateY &&
+        nextSettings.scaleX === DEFAULT_MEDIA_TRANSFORM.scaleX &&
+        nextSettings.scaleY === DEFAULT_MEDIA_TRANSFORM.scaleY &&
+        nextSettings.rotateDeg === DEFAULT_MEDIA_TRANSFORM.rotateDeg &&
+        nextSettings.pivotX === DEFAULT_MEDIA_TRANSFORM.pivotX &&
+        nextSettings.pivotY === DEFAULT_MEDIA_TRANSFORM.pivotY
+
+      const next = { ...current }
+      if (isDefault) {
+        delete next[inspectorNode.id]
+      } else {
+        next[inspectorNode.id] = nextSettings
+      }
+      return next
+    })
+  }
+
+  useEffect(() => {
+    if (!inspectorResize) {
+      return
+    }
+
+    const onPointerMove = (event: PointerEvent) => {
+      const delta = inspectorResize.startX - event.clientX
+      const maxWidth = Math.max(320, Math.floor(window.innerWidth * 0.55))
+      const nextWidth = Math.max(220, Math.min(maxWidth, inspectorResize.startWidth + delta))
+      setInspectorWidth(nextWidth)
+    }
+
+    const stopResize = () => {
+      setInspectorResize(null)
+    }
+
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', stopResize)
+    window.addEventListener('pointercancel', stopResize)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', stopResize)
+      window.removeEventListener('pointercancel', stopResize)
+    }
+  }, [inspectorResize])
 
   useEffect(() => {
     const decoderCache = gifDecoderCacheRef.current
@@ -1129,6 +1252,7 @@ function App() {
       setGifFrameCounts({})
       setGifSeekFrames({})
       setBrokenMediaIds({})
+      setMediaTransforms({})
 
       nextIdRef.current = snapshotState.nextId
       nextZRef.current = snapshotState.nextZ
@@ -1899,6 +2023,7 @@ function App() {
     setScaleMode(null)
     setMoveMode(null)
     setBrokenMediaIds({})
+    setMediaTransforms({})
   }
 
   const centerView = () => {
@@ -1934,99 +2059,99 @@ function App() {
           setDarkMode((current) => !current)
         }}
       />
-
-      <BoardViewport
-        boardRef={boardRef}
-        boardWrapRef={boardWrapRef}
-        boardWidth={WORLD_SIZE}
-        boardHeight={WORLD_SIZE}
-        isPanning={Boolean(pan)}
-        isScaleMode={Boolean(scaleMode)}
-        isMoveMode={Boolean(moveMode)}
-        onContextMenu={(event) => {
-          event.preventDefault()
-        }}
-        onWrapPointerDown={(event) => {
-          if (event.button === 0 && (scaleMode || moveMode)) {
+      <section className="app-content" style={appContentStyle}>
+        <BoardViewport
+          boardRef={boardRef}
+          boardWrapRef={boardWrapRef}
+          boardWidth={WORLD_SIZE}
+          boardHeight={WORLD_SIZE}
+          isPanning={Boolean(pan)}
+          isScaleMode={Boolean(scaleMode)}
+          isMoveMode={Boolean(moveMode)}
+          onContextMenu={(event) => {
             event.preventDefault()
-            applyTransformMode()
-            return
-          }
+          }}
+          onWrapPointerDown={(event) => {
+            if (event.button === 0 && (scaleMode || moveMode)) {
+              event.preventDefault()
+              applyTransformMode()
+              return
+            }
 
-          if (event.button !== 1) {
-            return
-          }
+            if (event.button !== 1) {
+              return
+            }
 
-          event.preventDefault()
-          const wrapper = boardWrapRef.current
-          if (!wrapper) {
-            return
-          }
-
-          setPan({
-            startClientX: event.clientX,
-            startClientY: event.clientY,
-            startScrollLeft: wrapper.scrollLeft,
-            startScrollTop: wrapper.scrollTop,
-          })
-
-          ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-        }}
-        onAuxClick={(event) => {
-          if (event.button === 1) {
             event.preventDefault()
-          }
-        }}
-        onPointerMove={onPointerMove}
-        onPointerUp={stopDrag}
-        onPointerCancel={stopDrag}
-        onBoardDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
-          const types = event.dataTransfer.types
-          if (
-            types.includes('Files') ||
-            types.includes('text/uri-list') ||
-            types.includes('text/plain') ||
-            types.includes('text/html') ||
-            types.includes('DownloadURL')
-          ) {
-            event.preventDefault()
-            event.dataTransfer.dropEffect = 'copy'
-          }
-        }}
-        onBoardDrop={(event: ReactDragEvent<HTMLDivElement>) => {
-          handleBoardDrop(event)
-        }}
-        onBoardPointerDown={(event) => {
-          if (event.button === 0 && (scaleMode || moveMode)) {
-            event.preventDefault()
-            applyTransformMode()
-            return
-          }
+            const wrapper = boardWrapRef.current
+            if (!wrapper) {
+              return
+            }
 
-          if (event.target !== event.currentTarget || event.button !== 0) {
-            return
-          }
-
-          const point = getBoardPointer(event)
-          if (!point) {
-            return
-          }
-
-          if (event.ctrlKey) {
-            setMarquee({
-              startX: point.x,
-              startY: point.y,
-              currentX: point.x,
-              currentY: point.y,
+            setPan({
+              startClientX: event.clientX,
+              startClientY: event.clientY,
+              startScrollLeft: wrapper.scrollLeft,
+              startScrollTop: wrapper.scrollTop,
             })
-            ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-            return
-          }
 
-          setSelectedId(null)
-          setSelectedIds([])
-        }}
-      >
+            ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+          }}
+          onAuxClick={(event) => {
+            if (event.button === 1) {
+              event.preventDefault()
+            }
+          }}
+          onPointerMove={onPointerMove}
+          onPointerUp={stopDrag}
+          onPointerCancel={stopDrag}
+          onBoardDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
+            const types = event.dataTransfer.types
+            if (
+              types.includes('Files') ||
+              types.includes('text/uri-list') ||
+              types.includes('text/plain') ||
+              types.includes('text/html') ||
+              types.includes('DownloadURL')
+            ) {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'copy'
+            }
+          }}
+          onBoardDrop={(event: ReactDragEvent<HTMLDivElement>) => {
+            handleBoardDrop(event)
+          }}
+          onBoardPointerDown={(event) => {
+            if (event.button === 0 && (scaleMode || moveMode)) {
+              event.preventDefault()
+              applyTransformMode()
+              return
+            }
+
+            if (event.target !== event.currentTarget || event.button !== 0) {
+              return
+            }
+
+            const point = getBoardPointer(event)
+            if (!point) {
+              return
+            }
+
+            if (event.ctrlKey) {
+              setMarquee({
+                startX: point.x,
+                startY: point.y,
+                currentX: point.x,
+                currentY: point.y,
+              })
+              ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+              return
+            }
+
+            setSelectedId(null)
+            setSelectedIds([])
+          }}
+        >
         {images.map((image) => {
           const activeScaleMode = scaleMode
           const activeMoveMode = moveMode
@@ -2054,6 +2179,8 @@ function App() {
               displayY={displayY}
               displayWidth={displayWidth}
               broken={Boolean(activeBrokenMediaIds[image.id])}
+              mediaTransformCss={getTransformCss(getMediaTransformForNode(image.id))}
+              mediaTransformOrigin={getTransformOrigin(getMediaTransformForNode(image.id))}
               enableSelectionShader={enableSelectionShader}
               seekPanelOpen={effectiveSeekPanelId === image.id && (image.mediaKind === 'video' || image.isGif)}
               videoTimeline={videoTimelines[image.id]}
@@ -2271,7 +2398,37 @@ function App() {
         />
 
         {marquee && <SelectionMarquee marquee={marquee} />}
-      </BoardViewport>
+        </BoardViewport>
+        <div
+          className="inspector-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize inspector"
+          onPointerDown={(event) => {
+            if (event.button !== 0) {
+              return
+            }
+            event.preventDefault()
+            setInspectorResize({
+              startX: event.clientX,
+              startWidth: inspectorWidth,
+            })
+          }}
+        />
+        <InspectorPanel
+          selectedNode={inspectorNode}
+          transformSettings={selectedNodeTransform}
+          mediaTransformCss={getTransformCss(selectedNodeTransform)}
+          mediaTransformOrigin={getTransformOrigin(selectedNodeTransform)}
+          onFlipHorizontalChange={(nextValue) => {
+            updateSelectedNodeTransform({ flipHorizontal: nextValue })
+          }}
+          onTransformSettingsChange={updateSelectedNodeTransform}
+          onResetTransform={() => {
+            updateSelectedNodeTransform(DEFAULT_MEDIA_TRANSFORM)
+          }}
+        />
+      </section>
     </main>
   )
 }

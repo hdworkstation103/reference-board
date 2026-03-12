@@ -14,6 +14,8 @@ type BoardNodeProps = {
   displayY: number
   displayWidth: number
   broken: boolean
+  mediaTransformCss: string
+  mediaTransformOrigin: string
   enableSelectionShader: boolean
   seekPanelOpen: boolean
   videoTimeline?: MediaTimeline
@@ -42,6 +44,8 @@ function BoardNode({
   displayY,
   displayWidth,
   broken,
+  mediaTransformCss,
+  mediaTransformOrigin,
   enableSelectionShader,
   seekPanelOpen,
   videoTimeline,
@@ -103,6 +107,8 @@ function BoardNode({
           image={image}
           displayWidth={displayWidth}
           broken={broken}
+          mediaTransformCss={mediaTransformCss}
+          mediaTransformOrigin={mediaTransformOrigin}
           displayImageSrc={displayImageSrc}
           shouldUseBlurBg={shouldUseBlurBg}
           setVideoRef={(element) => {
