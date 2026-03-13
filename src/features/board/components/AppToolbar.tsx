@@ -77,7 +77,7 @@ function AppToolbar({
       />
 
       <div className="toolbar-logo" aria-label="App logo">
-        PureRef Lite
+        Reference Board
       </div>
 
       <nav ref={navRef} className="menu-bar" aria-label="Board menu">

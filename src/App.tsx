@@ -104,7 +104,7 @@ const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
 function App() {
   const [images, setImages] = useState<BoardImage[]>([]);
   const [darkMode, setDarkMode] = useState(
-    () => window.localStorage.getItem("pureref-lite-theme") === "dark",
+    () => window.localStorage.getItem("reference-board-theme") === "dark",
   );
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
   const [scaleMode, setScaleMode] = useState<ScaleModeState | null>(null);
@@ -1201,7 +1201,7 @@ function App() {
 
   useEffect(() => {
     window.localStorage.setItem(
-      "pureref-lite-theme",
+      "reference-board-theme",
       darkMode ? "dark" : "light",
     );
   }, [darkMode]);
@@ -2454,7 +2454,7 @@ function App() {
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
-    link.download = `pureref-lite-${snapshot.createdAt.replaceAll(":", "-")}.json`;
+    link.download = `reference-board-${snapshot.createdAt.replaceAll(":", "-")}.json`;
     link.click();
     URL.revokeObjectURL(href);
   };
