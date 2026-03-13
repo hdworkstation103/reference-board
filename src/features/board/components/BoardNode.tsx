@@ -1,4 +1,4 @@
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { CARD_BORDER_HEIGHT, CAPTION_HEIGHT, WORLD_ORIGIN } from '../constants'
 import type { BoardImage, MediaTimeline } from '../types'
 import MediaBody from './MediaBody'
@@ -22,6 +22,7 @@ type BoardNodeProps = {
   gifFrameCount: number
   gifSeekFrame: number
   onPointerDown: (event: ReactPointerEvent, id: number) => void
+  onContextMenu: (event: ReactMouseEvent, id: number) => void
   onResizePointerDown: (event: ReactPointerEvent, id: number) => void
   onDisableSelectionShader: () => void
   onNoteFocusChange: (focused: boolean) => void
@@ -52,6 +53,7 @@ function BoardNode({
   gifFrameCount,
   gifSeekFrame,
   onPointerDown,
+  onContextMenu,
   onResizePointerDown,
   onDisableSelectionShader,
   onNoteFocusChange,
@@ -89,6 +91,7 @@ function BoardNode({
         zIndex: image.z,
       }}
       onPointerDown={(event) => onPointerDown(event, image.id)}
+      onContextMenu={(event) => onContextMenu(event, image.id)}
     >
       {image.mediaKind === 'note' ? (
         <NoteBody

@@ -361,6 +361,87 @@ label.menu-item {
   background-size: 32px 32px;
 }
 
+.context-menu-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10020;
+}
+
+.context-menu {
+  position: fixed;
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(177, 188, 201, 0.9);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 16px 40px rgba(14, 23, 36, 0.18),
+    0 2px 8px rgba(14, 23, 36, 0.12);
+  pointer-events: auto;
+}
+
+.context-menu-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #5f6d7f;
+}
+
+.context-menu-section {
+  display: grid;
+  gap: 4px;
+}
+
+.context-menu-section + .context-menu-section {
+  padding-top: 10px;
+  border-top: 1px solid rgba(213, 220, 229, 0.95);
+}
+
+.context-menu-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #738195;
+}
+
+.context-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #223044;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu-item:hover {
+  background: #eef5fd;
+  border-color: #d7e1ec;
+}
+
+.context-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.context-menu-shortcut {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #7a8798;
+}
+
 .app-shell.dark .toolbar {
   border-bottom-color: #2f2f2f;
   background: rgba(37, 37, 38, 0.92);
@@ -494,6 +575,39 @@ label.menu-item {
   background-image:
     linear-gradient(#2a2d2e 1px, transparent 1px),
     linear-gradient(90deg, #2a2d2e 1px, transparent 1px);
+}
+
+.app-shell.dark .context-menu {
+  border-color: rgba(65, 71, 79, 0.92);
+  background: rgba(37, 37, 38, 0.96);
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.38),
+    0 2px 8px rgba(0, 0, 0, 0.22);
+}
+
+.app-shell.dark .context-menu-label {
+  color: #94a5ba;
+}
+
+.app-shell.dark .context-menu-section + .context-menu-section {
+  border-top-color: rgba(65, 71, 79, 0.92);
+}
+
+.app-shell.dark .context-menu-section-title {
+  color: #8fa3bb;
+}
+
+.app-shell.dark .context-menu-item {
+  color: #d6deea;
+}
+
+.app-shell.dark .context-menu-item:hover {
+  background: #34353a;
+  border-color: #4a4b52;
+}
+
+.app-shell.dark .context-menu-shortcut {
+  color: #91a0b1;
 }
 
 .board-image {

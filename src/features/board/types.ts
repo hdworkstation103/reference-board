@@ -185,3 +185,40 @@ export type PersistentGroupView = {
   memberIds: number[]
   bounds: GroupBounds
 }
+
+export type ContextMenuTarget =
+  | {
+      kind: 'board'
+      worldX: number
+      worldY: number
+    }
+  | {
+      kind: 'node'
+      nodeId: number
+      nodeName: string
+      nodeMediaKind: BoardImage['mediaKind']
+      selectedIds: number[]
+    }
+  | {
+      kind: 'selection'
+      anchorId: number
+      selectedIds: number[]
+    }
+
+export type ContextMenuState = {
+  x: number
+  y: number
+  target: ContextMenuTarget
+}
+
+export type ContextMenuItem = {
+  id: string
+  label: string
+  shortcut?: string
+  disabled?: boolean
+}
+
+export type ContextMenuSection = {
+  title?: string
+  items: ContextMenuItem[]
+}

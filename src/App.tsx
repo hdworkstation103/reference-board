@@ -4,12 +4,14 @@ import {
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { CSSProperties } from 'react'
 import AppToolbar from './features/board/components/AppToolbar'
 import BoardNode from './features/board/components/BoardNode'
 import BoardViewport from './features/board/components/BoardViewport'
+import ContextMenu from './features/board/components/ContextMenu'
 import GroupOverlays from './features/board/components/GroupOverlays'
 import InspectorPanel from './features/board/components/InspectorPanel'
 import SelectionMarquee from './features/board/components/SelectionMarquee'
@@ -29,6 +31,8 @@ import { buildSnapshot, parseSnapshot } from './features/board/snapshot'
 import './features/board/styles/board.css'
 import type {
   BoardImage,
+  ContextMenuSection,
+  ContextMenuState,
   GroupBounds,
   GroupOverlayState,
   InteractionState,
@@ -104,6 +108,7 @@ function App() {
   const [groups, setGroups] = useState<PersistedGroup[]>([])
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [isEditorFocused, setIsEditorFocused] = useState(false)
   const [enableSelectionShader, setEnableSelectionShader] = useState(true)
   const [inspectorWidth, setInspectorWidth] = useState(300)
@@ -188,6 +193,68 @@ function App() {
 
     return activeMediaTransforms[inspectorNode.id] ?? DEFAULT_MEDIA_TRANSFORM
   }, [activeMediaTransforms, inspectorNode])
+  const contextMenuSections = useMemo<ContextMenuSection[]>(() => {
+    if (!contextMenu) {
+      return []
+    }
+
+    switch (contextMenu.target.kind) {
+      case 'board':
+        return [
+          {
+            title: 'Board',
+            items: [
+              { id: 'board.add-note', label: 'Add note here', shortcut: 'N' },
+              { id: 'board.paste-media', label: 'Paste media', shortcut: 'Ctrl+V', disabled: true },
+              { id: 'board.create-frame', label: 'Create frame', disabled: true },
+            ],
+          },
+          {
+            title: 'Mock',
+            items: [
+              { id: 'board.inspect-zone', label: 'Inspect board zone' },
+              { id: 'board.board-settings', label: 'Board settings' },
+            ],
+          },
+        ]
+      case 'node':
+        return [
+          {
+            title: contextMenu.target.nodeMediaKind === 'note' ? 'Note' : 'Node',
+            items: [
+              { id: 'node.open-details', label: 'Open details', shortcut: 'Enter' },
+              { id: 'node.duplicate', label: 'Duplicate node', shortcut: 'Ctrl+D', disabled: true },
+              { id: 'node.replace-media', label: 'Replace media', disabled: contextMenu.target.nodeMediaKind === 'note' },
+            ],
+          },
+          {
+            title: 'Mock',
+            items: [
+              { id: 'node.pin-context', label: 'Pin quick actions' },
+              { id: 'node.generate-variants', label: 'Generate variants', disabled: true },
+            ],
+          },
+        ]
+      case 'selection':
+        return [
+          {
+            title: 'Selection',
+            items: [
+              { id: 'selection.align', label: 'Align selection', disabled: true },
+              { id: 'selection.distribute', label: 'Distribute evenly', disabled: true },
+              { id: 'selection.wrap-group', label: 'Wrap in group' },
+            ],
+          },
+          {
+            title: 'Mock',
+            items: [
+              { id: 'selection.export', label: 'Export selection' },
+              { id: 'selection.layout-preset', label: 'Apply layout preset', disabled: true },
+            ],
+          },
+        ]
+    }
+  }, [contextMenu])
   const appContentStyle = useMemo(
     () =>
       ({
@@ -233,6 +300,14 @@ function App() {
       }
       return next
     })
+  }
+
+  const closeContextMenu = () => {
+    setContextMenu(null)
+  }
+
+  const openContextMenu = (menu: ContextMenuState) => {
+    setContextMenu(menu)
   }
 
   useEffect(() => {
@@ -1253,6 +1328,7 @@ function App() {
       setGifSeekFrames({})
       setBrokenMediaIds({})
       setMediaTransforms({})
+      setContextMenu(null)
 
       nextIdRef.current = snapshotState.nextId
       nextZRef.current = snapshotState.nextZ
@@ -1277,6 +1353,8 @@ function App() {
   }
 
   const onPointerDown = (event: ReactPointerEvent, id: number) => {
+    closeContextMenu()
+
     if (event.button === 2 && event.shiftKey) {
       event.preventDefault()
       event.stopPropagation()
@@ -1443,6 +1521,44 @@ function App() {
     })
 
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  }
+
+  const onNodeContextMenu = (event: ReactMouseEvent, id: number) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const node = images.find((item) => item.id === id)
+    if (!node) {
+      return
+    }
+
+    const activeSelection = selectedSet.has(id)
+      ? selectedIds.filter((selectedId) => images.some((item) => item.id === selectedId))
+      : [id]
+
+    if (!selectedSet.has(id)) {
+      setSelectedId(id)
+      setSelectedIds([id])
+    }
+
+    openContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      target:
+        activeSelection.length > 1
+          ? {
+              kind: 'selection',
+              anchorId: id,
+              selectedIds: activeSelection,
+            }
+          : {
+              kind: 'node',
+              nodeId: id,
+              nodeName: node.name,
+              nodeMediaKind: node.mediaKind,
+              selectedIds: activeSelection,
+            },
+    })
   }
 
   const onResizePointerDown = (event: ReactPointerEvent, id: number) => {
@@ -2024,6 +2140,7 @@ function App() {
     setMoveMode(null)
     setBrokenMediaIds({})
     setMediaTransforms({})
+    setContextMenu(null)
   }
 
   const centerView = () => {
@@ -2070,8 +2187,30 @@ function App() {
           isMoveMode={Boolean(moveMode)}
           onContextMenu={(event) => {
             event.preventDefault()
+
+            const point = getBoardPointFromClient(event.clientX, event.clientY)
+            if (!point) {
+              return
+            }
+
+            if (event.target === boardRef.current) {
+              setSelectedId(null)
+              setSelectedIds([])
+            }
+
+            openContextMenu({
+              x: event.clientX,
+              y: event.clientY,
+              target: {
+                kind: 'board',
+                worldX: point.x,
+                worldY: point.y,
+              },
+            })
           }}
           onWrapPointerDown={(event) => {
+            closeContextMenu()
+
             if (event.button === 0 && (scaleMode || moveMode)) {
               event.preventDefault()
               applyTransformMode()
@@ -2122,6 +2261,8 @@ function App() {
             handleBoardDrop(event)
           }}
           onBoardPointerDown={(event) => {
+            closeContextMenu()
+
             if (event.button === 0 && (scaleMode || moveMode)) {
               event.preventDefault()
               applyTransformMode()
@@ -2187,6 +2328,7 @@ function App() {
               gifFrameCount={gifFrameCounts[image.id] ?? 1}
               gifSeekFrame={gifSeekFrames[image.id] ?? 0}
               onPointerDown={onPointerDown}
+              onContextMenu={onNodeContextMenu}
               onResizePointerDown={onResizePointerDown}
               onDisableSelectionShader={() => {
                 setEnableSelectionShader(false)
@@ -2399,6 +2541,14 @@ function App() {
 
         {marquee && <SelectionMarquee marquee={marquee} />}
         </BoardViewport>
+        <ContextMenu
+          menu={contextMenu}
+          sections={contextMenuSections}
+          onClose={closeContextMenu}
+          onAction={(actionId) => {
+            console.info('[context-menu]', actionId, contextMenu?.target)
+          }}
+        />
         <div
           className="inspector-resize-handle"
           role="separator"
