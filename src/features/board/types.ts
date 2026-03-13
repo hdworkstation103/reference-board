@@ -256,6 +256,7 @@ export type ContextMenuTarget =
       nodeName: string;
       nodeMediaKind: BoardImage["mediaKind"];
       canUntuckToFrame: boolean;
+      previewFrameId: number | null;
       selectedIds: number[];
     }
   | {

@@ -242,6 +242,8 @@ function App() {
         : null,
     [activeFrames, selectedFrameId],
   );
+  const getFrameForNode = (nodeId: number) =>
+    activeFrames.find((frame) => frame.memberIds.includes(nodeId)) ?? null;
   const inspectorNode = useMemo(() => {
     if (selectedId === null) {
       return null;
@@ -307,6 +309,11 @@ function App() {
                 id: "node.untuck-to-frame",
                 label: "Untuck into frame",
                 disabled: !contextMenu.target.canUntuckToFrame,
+              },
+              {
+                id: "node.set-preview",
+                label: "Set Preview",
+                disabled: contextMenu.target.previewFrameId === null,
               },
             ],
           },
@@ -489,6 +496,26 @@ function App() {
     );
   };
 
+  const setFramePreview = (frameId: number, nodeId: number) => {
+    setFrames((current) =>
+      current.map((frame) => {
+        if (frame.id !== frameId) {
+          return frame;
+        }
+
+        const nextIndex = frame.memberIds.indexOf(nodeId);
+        if (nextIndex < 0) {
+          return frame;
+        }
+
+        return {
+          ...frame,
+          activeMemberIndex: nextIndex,
+        };
+      }),
+    );
+  };
+
   const createFrameFromIds = (memberIds: number[], name?: string) => {
     const uniqueMemberIds = memberIds.filter(
       (id, index) =>
@@ -535,6 +562,115 @@ function App() {
     const point = getBoardPointer(event);
     const frame = frames.find((entry) => entry.id === frameId);
     if (!point || !frame) {
+      return;
+    }
+
+    if (event.altKey) {
+      const idMap = new Map<number, number>();
+      const duplicatedItems = frame.memberIds
+        .map((memberId) => images.find((item) => item.id === memberId))
+        .filter((item): item is BoardImage => item !== undefined)
+        .map((source) => {
+          const duplicateId = nextIdRef.current++;
+          idMap.set(source.id, duplicateId);
+          return {
+            ...source,
+            id: duplicateId,
+            z: nextZRef.current++,
+          };
+        });
+
+      if (duplicatedItems.length === 0) {
+        return;
+      }
+
+      const duplicateFrameId = nextFrameIdRef.current++;
+      const duplicateMemberIds = frame.memberIds
+        .map((memberId) => idMap.get(memberId))
+        .filter((memberId): memberId is number => memberId !== undefined);
+      const duplicateActiveSourceId =
+        frame.memberIds[
+          Math.max(
+            0,
+            Math.min(frame.activeMemberIndex ?? 0, frame.memberIds.length - 1),
+          )
+        ];
+      const duplicateActiveIndex = Math.max(
+        0,
+        duplicateMemberIds.indexOf(idMap.get(duplicateActiveSourceId) ?? -1),
+      );
+
+      setImages((current) => [...current, ...duplicatedItems]);
+
+      setFrames((current) => [
+        ...current,
+        {
+          ...frame,
+          id: duplicateFrameId,
+          memberIds: duplicateMemberIds,
+          activeMemberIndex: duplicateActiveIndex,
+          z: nextZRef.current++,
+        },
+      ]);
+
+      setVideoTimelines((current) => {
+        const next = { ...current };
+        for (const memberId of frame.memberIds) {
+          const duplicateId = idMap.get(memberId);
+          if (!duplicateId) {
+            continue;
+          }
+
+          const source = images.find((item) => item.id === memberId);
+          const sourceVideo =
+            source?.mediaKind === "video" ? videoRefs.current[memberId] : null;
+          const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null;
+          const sourceVideoDuration =
+            sourceVideo && Number.isFinite(sourceVideo.duration)
+              ? sourceVideo.duration
+              : (videoTimelines[memberId]?.duration ?? 0);
+
+          if (sourceVideoTime !== null) {
+            pendingVideoSeekRef.current[duplicateId] = sourceVideoTime;
+            next[duplicateId] = {
+              current: sourceVideoTime,
+              duration: sourceVideoDuration,
+            };
+          }
+        }
+        return next;
+      });
+
+      setGifSeekFrames((current) => {
+        const next = { ...current };
+        for (const memberId of frame.memberIds) {
+          const source = images.find((item) => item.id === memberId);
+          const duplicateId = idMap.get(memberId);
+          if (!source?.isGif || !duplicateId) {
+            continue;
+          }
+          next[duplicateId] = gifSeekFrames[memberId] ?? 0;
+        }
+        return next;
+      });
+
+      const startPositions: Record<number, { x: number; y: number }> = {};
+      for (const item of duplicatedItems) {
+        startPositions[item.id] = { x: item.x, y: item.y };
+      }
+
+      setSelectedFrameId(duplicateFrameId);
+      setSelectedIds([]);
+      setSelectedId(null);
+      setInteraction({
+        kind: "move-frame",
+        frameId: duplicateFrameId,
+        startPointerX: point.x,
+        startPointerY: point.y,
+        startPositions,
+      });
+
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
       return;
     }
 
@@ -1049,6 +1185,39 @@ function App() {
         return;
       }
 
+      if (
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        (event.key === "t" || event.key === "T")
+      ) {
+        const targetFrame =
+          selectedCollapsedFrame ??
+          (selectedFrameId !== null
+            ? activeFrames.find((frame) => frame.id === selectedFrameId) ?? null
+            : null) ??
+          (() => {
+            const activeNodeIds =
+              selectedIds.length > 0
+                ? selectedIds
+                : selectedId !== null
+                  ? [selectedId]
+                  : [];
+            if (activeNodeIds.length !== 1) {
+              return null;
+            }
+            return getFrameForNode(activeNodeIds[0]);
+          })();
+
+        if (!targetFrame) {
+          return;
+        }
+
+        event.preventDefault();
+        toggleFrameCollapsed(targetFrame.id);
+        return;
+      }
+
       const isLayoutShortcut = event.key.toLowerCase() === "l";
       const isAlignShortcut =
         event.key === "ArrowUp" ||
@@ -1374,6 +1543,27 @@ function App() {
       }
 
       if (event.key === "x" || event.key === "X") {
+        if (selectedFrameId !== null) {
+          const frameToDelete = activeFrames.find(
+            (frame) => frame.id === selectedFrameId,
+          );
+          if (!frameToDelete) {
+            return;
+          }
+
+          const deleteIds = [...frameToDelete.memberIds];
+          setImages((current) =>
+            current.filter((item) => !deleteIds.includes(item.id)),
+          );
+          setFrames((current) =>
+            current.filter((frame) => frame.id !== selectedFrameId),
+          );
+          setSelectedFrameId(null);
+          setSelectedIds([]);
+          setSelectedId(null);
+          return;
+        }
+
         const deleteIds =
           selectedIds.length > 1
             ? selectedIds
@@ -1418,7 +1608,7 @@ function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [images, isEditorFocused, moveMode, scaleMode, selectedCollapsedFrame, selectedId, selectedIds]);
+  }, [activeFrames, images, isEditorFocused, moveMode, scaleMode, selectedCollapsedFrame, selectedFrameId, selectedId, selectedIds]);
 
   useEffect(() => {
     const shouldPlay = new Set(
@@ -2195,59 +2385,101 @@ function App() {
     }
 
     if (event.altKey) {
-      const duplicateId = nextIdRef.current++;
-      const duplicateZ = nextZRef.current++;
-      const sourceVideo =
-        targetImage.mediaKind === "video" ? videoRefs.current[id] : null;
-      const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null;
-      const sourceVideoDuration =
-        sourceVideo && Number.isFinite(sourceVideo.duration)
-          ? sourceVideo.duration
-          : (videoTimelines[id]?.duration ?? 0);
-      const sourceGifFrame = targetImage.isGif ? (gifSeekFrames[id] ?? 0) : 0;
+      const sourceIds =
+        selectedIds.length > 1 && selectedSet.has(id)
+          ? selectedIds.filter((selected) =>
+              images.some((item) => item.id === selected),
+            )
+          : [id];
 
-      setImages((current) => {
-        const source = current.find((item) => item.id === id);
-        if (!source) {
-          return current;
-        }
-
-        return [
-          ...current,
-          {
+      const idMap = new Map<number, number>();
+      const duplicatedItems = sourceIds
+        .map((sourceId) => images.find((item) => item.id === sourceId))
+        .filter((item): item is BoardImage => item !== undefined)
+        .map((source) => {
+          const duplicateId = nextIdRef.current++;
+          idMap.set(source.id, duplicateId);
+          return {
             ...source,
             id: duplicateId,
-            z: duplicateZ,
-          },
-        ];
-      });
+            z: nextZRef.current++,
+          };
+        });
 
-      if (sourceVideoTime !== null) {
-        pendingVideoSeekRef.current[duplicateId] = sourceVideoTime;
-        setVideoTimelines((current) => ({
-          ...current,
-          [duplicateId]: {
-            current: sourceVideoTime,
-            duration: sourceVideoDuration,
-          },
-        }));
+      if (duplicatedItems.length === 0) {
+        return;
       }
 
-      if (targetImage.isGif) {
-        setGifSeekFrames((current) => ({
-          ...current,
-          [duplicateId]: sourceGifFrame,
-        }));
+      setImages((current) => [...current, ...duplicatedItems]);
+
+      setVideoTimelines((current) => {
+        const next = { ...current };
+        for (const sourceId of sourceIds) {
+          const duplicateId = idMap.get(sourceId);
+          if (!duplicateId) {
+            continue;
+          }
+
+          const source = images.find((item) => item.id === sourceId);
+          const sourceVideo =
+            source?.mediaKind === "video" ? videoRefs.current[sourceId] : null;
+          const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null;
+          const sourceVideoDuration =
+            sourceVideo && Number.isFinite(sourceVideo.duration)
+              ? sourceVideo.duration
+              : (videoTimelines[sourceId]?.duration ?? 0);
+
+          if (sourceVideoTime !== null) {
+            pendingVideoSeekRef.current[duplicateId] = sourceVideoTime;
+            next[duplicateId] = {
+              current: sourceVideoTime,
+              duration: sourceVideoDuration,
+            };
+          }
+        }
+        return next;
+      });
+
+      setGifSeekFrames((current) => {
+        const next = { ...current };
+        for (const sourceId of sourceIds) {
+          const source = images.find((item) => item.id === sourceId);
+          const duplicateId = idMap.get(sourceId);
+          if (!source?.isGif || !duplicateId) {
+            continue;
+          }
+          next[duplicateId] = gifSeekFrames[sourceId] ?? 0;
+        }
+        return next;
+      });
+
+      if (duplicatedItems.length > 1) {
+        const startPositions: Record<number, { x: number; y: number }> = {};
+        for (const item of duplicatedItems) {
+          startPositions[item.id] = { x: item.x, y: item.y };
+        }
+
+        setInteraction({
+          kind: "move-group",
+          ids: duplicatedItems.map((item) => item.id),
+          startPointerX: point.x,
+          startPointerY: point.y,
+          startPositions,
+        });
+        setSelectedId(duplicatedItems[duplicatedItems.length - 1].id);
+        setSelectedIds(duplicatedItems.map((item) => item.id));
+      } else {
+        const duplicatedItem = duplicatedItems[0];
+        setInteraction({
+          kind: "move",
+          id: duplicatedItem.id,
+          offsetX: point.x - targetImage.x,
+          offsetY: point.y - targetImage.y,
+        });
+        setSelectedId(duplicatedItem.id);
+        setSelectedIds([duplicatedItem.id]);
       }
 
-      setInteraction({
-        kind: "move",
-        id: duplicateId,
-        offsetX: point.x - targetImage.x,
-        offsetY: point.y - targetImage.y,
-      });
-      setSelectedId(duplicateId);
-      setSelectedIds([duplicateId]);
       setSelectedFrameId(null);
       (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
       return;
@@ -2305,6 +2537,7 @@ function App() {
           images.some((item) => item.id === selectedId),
         )
       : [id];
+    const parentFrame = getFrameForNode(id);
 
     if (!selectedSet.has(id)) {
       setSelectedFrameId(null);
@@ -2329,6 +2562,7 @@ function App() {
               nodeMediaKind: node.mediaKind,
               canUntuckToFrame:
                 node.mediaKind !== "note" && (node.mediaItems?.length ?? 0) > 1,
+              previewFrameId: parentFrame?.id ?? null,
               selectedIds: activeSelection,
             },
     });
@@ -2883,14 +3117,10 @@ function App() {
         const sourceId = interaction.id;
         let createdFrameId: number | null = null;
 
-        setImages((current) => {
-          const sourceNode = current.find((item) => item.id === sourceId);
-          if (!sourceNode) {
-            return current;
-          }
-
+        const sourceNode = images.find((item) => item.id === sourceId);
+        if (sourceNode) {
           const sourceRect = getItemRect(sourceNode);
-          const targetNode = [...current]
+          const targetNode = [...images]
             .filter((item) => item.id !== sourceId && item.z < sourceNode.z)
             .sort((a, b) => b.z - a.z)
             .find((item) => {
@@ -2909,34 +3139,64 @@ function App() {
               );
             });
 
-          if (!targetNode) {
-            return current;
+          if (targetNode) {
+            const sourceFrame = activeFrames.find((frame) =>
+              frame.memberIds.includes(sourceId),
+            );
+            const targetFrame = activeFrames.find((frame) =>
+              frame.memberIds.includes(targetNode.id),
+            );
+
+            if (targetFrame && sourceFrame?.id !== targetFrame.id) {
+              setFrames((currentFrames) =>
+                currentFrames
+                  .map((frame) => {
+                    if (frame.id === targetFrame.id) {
+                      return frame.memberIds.includes(sourceId)
+                        ? frame
+                        : {
+                            ...frame,
+                            memberIds: [...frame.memberIds, sourceId],
+                          };
+                    }
+
+                    return {
+                      ...frame,
+                      memberIds: frame.memberIds.filter(
+                        (memberId) => memberId !== sourceId,
+                      ),
+                    };
+                  })
+                  .filter((frame) => frame.memberIds.length > 0),
+              );
+              setSelectedFrameId(targetFrame.id);
+              setSelectedIds([]);
+              setSelectedId(null);
+            } else if (!targetFrame) {
+              createdFrameId = nextFrameIdRef.current++;
+              setFrames((currentFrames) => [
+                ...currentFrames
+                  .map((frame) => ({
+                    ...frame,
+                    memberIds: frame.memberIds.filter(
+                      (memberId) =>
+                        memberId !== sourceId && memberId !== targetNode.id,
+                    ),
+                  }))
+                  .filter((frame) => frame.memberIds.length > 0),
+                {
+                  id: createdFrameId!,
+                  name: `${targetNode.name} Frame`,
+                  memberIds: [targetNode.id, sourceId],
+                  collapsed: true,
+                  activeMemberIndex: 0,
+                  slideshowPlaying: false,
+                  z: nextZRef.current++,
+                },
+              ]);
+            }
           }
-
-          createdFrameId = nextFrameIdRef.current++;
-          setFrames((currentFrames) => [
-            ...currentFrames
-              .map((frame) => ({
-                ...frame,
-                memberIds: frame.memberIds.filter(
-                  (memberId) =>
-                    memberId !== sourceId && memberId !== targetNode.id,
-                ),
-              }))
-              .filter((frame) => frame.memberIds.length > 0),
-            {
-              id: createdFrameId!,
-              name: `${targetNode.name} Frame`,
-              memberIds: [targetNode.id, sourceId],
-              collapsed: true,
-              activeMemberIndex: 0,
-              slideshowPlaying: false,
-              z: nextZRef.current++,
-            },
-          ]);
-
-          return current;
-        });
+        }
 
         if (createdFrameId !== null) {
           setSelectedFrameId(createdFrameId);
@@ -2959,6 +3219,55 @@ function App() {
     } else if (interaction?.kind === "resize") {
       reconcileFramesAfterNodeMove([interaction.id], false);
     } else if (interaction?.kind === "move-frame") {
+      const shouldCombineFrames =
+        Boolean(event?.shiftKey || keyStateRef.current.shift) && event;
+      if (shouldCombineFrames) {
+        const point = getBoardPointFromClient(event.clientX, event.clientY);
+        const sourceFrame = activeFrames.find(
+          (frame) => frame.id === interaction.frameId,
+        );
+        if (point && sourceFrame) {
+          const targetFrame = activeFrames
+            .filter((frame) => frame.id !== sourceFrame.id)
+            .sort((a, b) => b.z - a.z)
+            .find((frame) => {
+              const bounds = getFrameBounds(frame.memberIds, images);
+              return (
+                bounds &&
+                point.x >= bounds.left &&
+                point.x <= bounds.left + bounds.width &&
+                point.y >= bounds.top &&
+                point.y <= bounds.top + bounds.height
+              );
+            });
+
+          if (targetFrame) {
+            setFrames((current) =>
+              current
+                .map((frame) => {
+                  if (frame.id === targetFrame.id) {
+                    return {
+                      ...frame,
+                      memberIds: [
+                        ...frame.memberIds,
+                        ...sourceFrame.memberIds.filter(
+                          (memberId) => !frame.memberIds.includes(memberId),
+                        ),
+                      ],
+                    };
+                  }
+
+                  return frame;
+                })
+                .filter((frame) => frame.id !== sourceFrame.id),
+            );
+            setSelectedFrameId(targetFrame.id);
+            setSelectedIds([]);
+            setSelectedId(null);
+          }
+        }
+      }
+
       setFrames((current) =>
         current.map((frame) =>
           frame.id === interaction.frameId
@@ -3146,24 +3455,43 @@ function App() {
           }}
         >
           {frameViews.map(({ frame, bounds }) => (
-            <FrameNode
-              key={frame.id}
-              frame={frame}
-              bounds={bounds}
-              selected={selectedFrameId === frame.id}
-              displayZIndex={Math.min(...frame.memberIds.map((id) => images.find((item) => item.id === id)?.z ?? frame.z)) - 1}
-              activeItem={getFrameActiveItem(frame)}
-              hiddenCount={frame.memberIds.length}
-              onMovePointerDown={startFrameMove}
-              onSelect={(frameId) => {
-                setSelectedFrameId(frameId);
-                setSelectedId(null);
-                setSelectedIds([]);
-              }}
-              onToggleCollapsed={toggleFrameCollapsed}
-              onToggleSlideshow={toggleFrameSlideshow}
-              onStepSlideshow={stepFrameSlideshow}
-            />
+            (() => {
+              const activeItem = getFrameActiveItem(frame);
+              const collapsedWidth = activeItem?.width ?? Math.max(240, Math.min(bounds.width, 420));
+              const collapsedHeight =
+                activeItem
+                  ? getItemHeight(activeItem)
+                  : Math.max(220, bounds.height);
+              const displayBounds = frame.collapsed
+                ? {
+                    left: bounds.left,
+                    top: bounds.top,
+                    width: collapsedWidth,
+                    height: collapsedHeight,
+                  }
+                : bounds;
+
+              return (
+                <FrameNode
+                  key={frame.id}
+                  frame={frame}
+                  bounds={displayBounds}
+                  selected={selectedFrameId === frame.id}
+                  displayZIndex={Math.min(...frame.memberIds.map((id) => images.find((item) => item.id === id)?.z ?? frame.z)) - 1}
+                  activeItem={activeItem}
+                  hiddenCount={frame.memberIds.length}
+                  onMovePointerDown={startFrameMove}
+                  onSelect={(frameId) => {
+                    setSelectedFrameId(frameId);
+                    setSelectedId(null);
+                    setSelectedIds([]);
+                  }}
+                  onToggleCollapsed={toggleFrameCollapsed}
+                  onToggleSlideshow={toggleFrameSlideshow}
+                  onStepSlideshow={stepFrameSlideshow}
+                />
+              );
+            })()
           ))}
 
           {visibleImages.map((image) => {
@@ -3495,6 +3823,15 @@ function App() {
               menuTarget.canUntuckToFrame
             ) {
               untuckMediaNodeToFrame(menuTarget.nodeId);
+              return;
+            }
+
+            if (
+              menuTarget.kind === "node" &&
+              actionId === "node.set-preview" &&
+              menuTarget.previewFrameId !== null
+            ) {
+              setFramePreview(menuTarget.previewFrameId, menuTarget.nodeId);
               return;
             }
 

@@ -65,10 +65,16 @@ function FrameNode({
         style={{
           left: `${bounds.left + WORLD_ORIGIN}px`,
           top: `${bounds.top + WORLD_ORIGIN}px`,
-          width: `${Math.max(240, Math.min(bounds.width, 420))}px`,
+          width: `${bounds.width}px`,
+          height: `${bounds.height}px`,
           zIndex: displayZIndex,
         }}
-        onPointerDown={() => onSelect(frame.id)}
+        onPointerDown={(event) => {
+          onSelect(frame.id)
+          if (event.button === 0) {
+            onMovePointerDown(event, frame.id)
+          }
+        }}
       >
         <header className="frame-node-toolbar" onPointerDown={(event) => onMovePointerDown(event, frame.id)}>
           <span className="frame-node-title">{frame.name}</span>
