@@ -179,6 +179,8 @@ label.menu-item {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
+  min-height: 0;
 }
 
 .inspector-empty {
@@ -319,6 +321,68 @@ label.menu-item {
 
 .inspector-reset-transform:hover {
   background: #eef5fd;
+}
+
+.inspector-history {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid #d7dde5;
+  display: grid;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.inspector-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inspector-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #6b788b;
+}
+
+.inspector-history-list {
+  height: 220px;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 6px;
+  padding-right: 4px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.inspector-history-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.inspector-history-item {
+  display: grid;
+  gap: 2px;
+  padding: 8px 9px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #f7fafc;
+}
+
+.inspector-history-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #223044;
+}
+
+.inspector-history-time,
+.inspector-history-empty {
+  font-size: 11px;
+  color: #6b788b;
 }
 
 .inspector-reset-transform:disabled {
@@ -540,6 +604,28 @@ label.menu-item {
 
 .app-shell.dark .inspector-tools {
   border-top-color: #383f48;
+}
+
+.app-shell.dark .inspector-history {
+  border-top-color: #383f48;
+}
+
+.app-shell.dark .inspector-history-item {
+  border-color: #404a56;
+  background: #232931;
+}
+
+.app-shell.dark .inspector-history-toggle {
+  color: #98a9bf;
+}
+
+.app-shell.dark .inspector-history-label {
+  color: #d6deea;
+}
+
+.app-shell.dark .inspector-history-time,
+.app-shell.dark .inspector-history-empty {
+  color: #98a9bf;
 }
 
 .app-shell.dark .inspector-tools-title {

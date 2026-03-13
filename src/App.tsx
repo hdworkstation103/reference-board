@@ -45,6 +45,7 @@ import { buildSnapshot, parseSnapshot } from "./features/board/snapshot";
 import "./features/board/styles/board.css";
 import type {
   BoardFrame,
+  BoardDocument,
   BoardImage,
   ContextMenuSection,
   ContextMenuState,
@@ -53,6 +54,8 @@ import type {
   GroupOverlayState,
   InteractionState,
   MarqueeState,
+  HistoryEntry,
+  HistoryVisibilityPriority,
   MediaTransformSettings,
   MediaTimeline,
   MoveModeState,
@@ -128,6 +131,7 @@ function App() {
     Record<number, MediaTransformSettings>
   >({});
   const [frames, setFrames] = useState<BoardFrame[]>([]);
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(
     null,
@@ -144,6 +148,7 @@ function App() {
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
   const nextIdRef = useRef(1);
   const nextFrameIdRef = useRef(1);
+  const nextHistoryIdRef = useRef(1);
   const nextZRef = useRef(1);
   const gifDecoderCacheRef = useRef<
     Record<number, { decoder: GifDecoderLike; frameCount: number }>
@@ -155,6 +160,12 @@ function App() {
   const keyStateRef = useRef({ shift: false });
   const slideshowTimersRef = useRef<Record<number, number>>({});
   const frameSlideshowTimersRef = useRef<Record<number, number>>({});
+  const documentRef = useRef<BoardDocument>({
+    images: [],
+    frames: [],
+    mediaTransforms: {},
+    darkMode,
+  });
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const effectiveSeekPanelId = useMemo(
@@ -224,6 +235,15 @@ function App() {
   const visibleImages = useMemo(
     () => images.filter((item) => !collapsedFrameMemberIds.has(item.id)),
     [collapsedFrameMemberIds, images],
+  );
+  const boardDocument = useMemo<BoardDocument>(
+    () => ({
+      images,
+      frames,
+      mediaTransforms: activeMediaTransforms,
+      darkMode,
+    }),
+    [activeMediaTransforms, darkMode, frames, images],
   );
   const selectedCollapsedFrame = useMemo(
     () =>
@@ -423,6 +443,73 @@ function App() {
     setContextMenu(menu);
   };
 
+  const cloneDocument = (document: BoardDocument): BoardDocument => ({
+    images: document.images.map((image) => ({
+      ...image,
+      mediaItems: image.mediaItems?.map((mediaItem) => ({ ...mediaItem })),
+    })),
+    frames: document.frames.map((frame) => ({
+      ...frame,
+      memberIds: [...frame.memberIds],
+    })),
+    mediaTransforms: Object.fromEntries(
+      Object.entries(document.mediaTransforms).map(([id, settings]) => [
+        Number(id),
+        { ...settings },
+      ]),
+    ),
+    darkMode: document.darkMode,
+  });
+
+  const applyDocument = (document: BoardDocument) => {
+    setImages(document.images);
+    setFrames(document.frames);
+    setMediaTransforms(document.mediaTransforms);
+    setDarkMode(document.darkMode);
+    documentRef.current = cloneDocument(document);
+  };
+
+  const recordHistoryEntry = (
+    label: string,
+    before: BoardDocument,
+    after: BoardDocument,
+    visibilityPriority: HistoryVisibilityPriority = 0,
+  ) => {
+    const beforeJson = JSON.stringify(before);
+    const afterJson = JSON.stringify(after);
+    if (beforeJson === afterJson) {
+      return;
+    }
+
+    setHistoryEntries((current) => [
+      ...current,
+      {
+        id: `h${nextHistoryIdRef.current++}`,
+        label,
+        timestamp: Date.now(),
+        visibilityPriority,
+        before: cloneDocument(before),
+        after: cloneDocument(after),
+      },
+    ]);
+  };
+
+  const commitDocumentChange = (
+    label: string,
+    updater: (document: BoardDocument) => BoardDocument | null,
+    visibilityPriority: HistoryVisibilityPriority = 0,
+  ) => {
+    const before = cloneDocument(documentRef.current);
+    const next = updater(cloneDocument(before));
+    if (!next) {
+      return null;
+    }
+
+    applyDocument(next);
+    recordHistoryEntry(label, before, next, visibilityPriority);
+    return next;
+  };
+
   const getFrameActiveItem = (frame: BoardFrame) => {
     const members = frame.memberIds
       .map((memberId) => images.find((item) => item.id === memberId) ?? null)
@@ -446,18 +533,28 @@ function App() {
       setSelectedId(null);
     }
 
-    setFrames((current) =>
-      current.map((frame) =>
-        frame.id === frameId
-          ? {
-              ...frame,
-              collapsed: !frame.collapsed,
-              slideshowPlaying: frame.collapsed
-                ? false
-                : frame.slideshowPlaying,
-            }
-          : frame,
-      ),
+    commitDocumentChange(
+      targetFrame?.collapsed ? "Untuck Frame" : "Tuck Frame",
+      (document) => {
+        let changed = false;
+        const nextFrames = document.frames.map((frame) => {
+          if (frame.id !== frameId) {
+            return frame;
+          }
+
+          changed = true;
+          return {
+            ...frame,
+            collapsed: !frame.collapsed,
+            slideshowPlaying: frame.collapsed
+              ? false
+              : frame.slideshowPlaying,
+          };
+        });
+
+        return changed ? { ...document, frames: nextFrames } : null;
+      },
+      1,
     );
     setSelectedFrameId(frameId);
   };
@@ -498,10 +595,10 @@ function App() {
   };
 
   const layoutNodes = (nodeIds: number[]) => {
-    setImages((current) => {
-      const selected = current.filter((item) => nodeIds.includes(item.id));
+    commitDocumentChange("Layout Nodes", (document) => {
+      const selected = document.images.filter((item) => nodeIds.includes(item.id));
       if (selected.length < 2) {
-        return current;
+        return null;
       }
 
       const ordered = [...selected].sort((a, b) => a.y - b.y || a.x - b.x);
@@ -530,52 +627,65 @@ function App() {
         col += 1;
       }
 
-      return current.map((item) => {
-        const nextPosition = positions.get(item.id);
-        if (!nextPosition) {
-          return item;
-        }
+      return {
+        ...document,
+        images: document.images.map((item) => {
+          const nextPosition = positions.get(item.id);
+          if (!nextPosition) {
+            return item;
+          }
 
-        return {
-          ...item,
-          x: nextPosition.x,
-          y: nextPosition.y,
-        };
-      });
+          return {
+            ...item,
+            x: nextPosition.x,
+            y: nextPosition.y,
+          };
+        }),
+      };
     });
   };
 
   const setFramePreview = (frameId: number, nodeId: number) => {
-    setFrames((current) =>
-      current.map((frame) => {
+    commitDocumentChange("Set Frame Preview", (document) => {
+      let changed = false;
+      const nextFrames = document.frames.map((frame) => {
         if (frame.id !== frameId) {
           return frame;
         }
 
         const nextIndex = frame.memberIds.indexOf(nodeId);
-        if (nextIndex < 0) {
+        if (nextIndex < 0 || frame.activeMemberIndex === nextIndex) {
           return frame;
         }
 
+        changed = true;
         return {
           ...frame,
           activeMemberIndex: nextIndex,
         };
-      }),
-    );
+      });
+
+      return changed ? { ...document, frames: nextFrames } : null;
+    });
   };
 
   const renameFrame = (frameId: number, name: string) => {
-    setFrames((current) =>
-      current.map((frame) =>
-        frame.id === frameId
-          ? {
-              ...frame,
-              name,
-            }
-          : frame,
-      ),
-    );
+    commitDocumentChange("Rename Frame", (document) => {
+      let changed = false;
+      const nextFrames = document.frames.map((frame) => {
+        if (frame.id !== frameId || frame.name === name) {
+          return frame;
+        }
+
+        changed = true;
+        return {
+          ...frame,
+          name,
+        };
+      });
+
+      return changed ? { ...document, frames: nextFrames } : null;
+    });
     setRenamingFrameId(null);
   };
 
@@ -589,8 +699,8 @@ function App() {
       return;
     }
 
-    setFrames((current) => {
-      const nextFrames = current
+    commitDocumentChange("Create Frame", (document) => {
+      const nextFrames = document.frames
         .map((frame) => ({
           ...frame,
           memberIds: frame.memberIds.filter(
@@ -599,18 +709,21 @@ function App() {
         }))
         .filter((frame) => frame.memberIds.length > 0);
 
-      return [
-        ...nextFrames,
-        {
-          id: nextFrameIdRef.current++,
-          name: name ?? `Frame ${nextFrames.length + 1}`,
-          memberIds: uniqueMemberIds,
-          collapsed: false,
-          activeMemberIndex: 0,
-          slideshowPlaying: false,
-          z: nextZRef.current++,
-        },
-      ];
+      return {
+        ...document,
+        frames: [
+          ...nextFrames,
+          {
+            id: nextFrameIdRef.current++,
+            name: name ?? `Frame ${nextFrames.length + 1}`,
+            memberIds: uniqueMemberIds,
+            collapsed: false,
+            activeMemberIndex: 0,
+            slideshowPlaying: false,
+            z: nextZRef.current++,
+          },
+        ],
+      };
     });
   };
 
@@ -935,6 +1048,10 @@ function App() {
     setSelectedId(memberIds[memberIds.length - 1] ?? null);
     setSelectedFrameId(null);
   };
+
+  useEffect(() => {
+    documentRef.current = cloneDocument(boardDocument);
+  }, [boardDocument]);
 
   useEffect(() => {
     if (!inspectorResize) {
@@ -1590,12 +1707,11 @@ function App() {
           }
 
           const deleteIds = [...frameToDelete.memberIds];
-          setImages((current) =>
-            current.filter((item) => !deleteIds.includes(item.id)),
-          );
-          setFrames((current) =>
-            current.filter((frame) => frame.id !== selectedFrameId),
-          );
+          commitDocumentChange("Delete Frame", (document) => ({
+            ...document,
+            images: document.images.filter((item) => !deleteIds.includes(item.id)),
+            frames: document.frames.filter((frame) => frame.id !== selectedFrameId),
+          }));
           setSelectedFrameId(null);
           setSelectedIds([]);
           setSelectedId(null);
@@ -1612,8 +1728,27 @@ function App() {
           return;
         }
 
-        setImages((current) =>
-          current.filter((item) => !deleteIds.includes(item.id)),
+        commitDocumentChange(
+          deleteIds.length > 1 ? `Delete ${deleteIds.length} Nodes` : "Delete Node",
+          (document) => ({
+            ...document,
+            images: document.images.filter((item) => !deleteIds.includes(item.id)),
+            frames: document.frames
+              .map((frame) => {
+                const nextMemberIds = frame.memberIds.filter(
+                  (memberId) => !deleteIds.includes(memberId),
+                );
+                return {
+                  ...frame,
+                  memberIds: nextMemberIds,
+                  activeMemberIndex: Math.max(
+                    0,
+                    Math.min(frame.activeMemberIndex, nextMemberIds.length - 1),
+                  ),
+                };
+              })
+              .filter((frame) => frame.memberIds.length > 0),
+          }),
         );
         setInteraction((current) => {
           if (!current) {
@@ -1838,6 +1973,7 @@ function App() {
     fileList: FileList | null,
     anchor?: { x: number; y: number },
     sourceUrls?: string[],
+    historyLabel = "Add Media",
   ) => {
     if (!fileList || fileList.length === 0) {
       return;
@@ -1880,17 +2016,18 @@ function App() {
       ),
     );
 
-    setImages((current) => {
+    const before = cloneDocument(documentRef.current);
+    const nextImages = (() => {
       const cols = 5;
-      const nextImages = prepared.map((item, i) => {
+      return prepared.map((item, i) => {
         const row = Math.floor(i / cols);
         const col = i % cols;
         const x = anchor
           ? anchor.x - IMAGE_WIDTH / 2 + col * (IMAGE_WIDTH + 30)
-          : START_X + ((current.length + i) % cols) * (IMAGE_WIDTH + 30);
+          : START_X + ((before.images.length + i) % cols) * (IMAGE_WIDTH + 30);
         const y = anchor
           ? anchor.y + row * 220
-          : START_Y + Math.floor((current.length + i) / cols) * 220;
+          : START_Y + Math.floor((before.images.length + i) / cols) * 220;
 
         return {
           id: item.id,
@@ -1909,9 +2046,14 @@ function App() {
           z: item.z,
         };
       });
+    })();
 
-      return [...current, ...nextImages];
-    });
+    const after = {
+      ...before,
+      images: [...before.images, ...nextImages],
+    };
+    applyDocument(after);
+    recordHistoryEntry(historyLabel, before, after);
 
     if (prepared.length > 1) {
       const newIds = prepared.map((item) => item.id);
@@ -1930,8 +2072,9 @@ function App() {
       return;
     }
 
-    setImages((current) =>
-      current.map((item) => {
+    commitDocumentChange("Replace Media", (document) => ({
+      ...document,
+      images: document.images.map((item) => {
         if (item.id !== nodeId) {
           return item;
         }
@@ -1977,7 +2120,7 @@ function App() {
           aspect: 1,
         };
       }),
-    );
+    }));
 
     setVideoTimelines((current) => {
       const next = { ...current };
@@ -2168,7 +2311,10 @@ function App() {
 
   const addNote = (anchor?: { x: number; y: number }) => {
     const noteId = nextIdRef.current++;
-    const noteName = `Note ${images.filter((item) => item.mediaKind === "note").length + 1}`;
+    const before = cloneDocument(documentRef.current);
+    const noteName = `Note ${
+      before.images.filter((item) => item.mediaKind === "note").length + 1
+    }`;
 
     const nextNote: BoardImage = {
       id: noteId,
@@ -2187,7 +2333,12 @@ function App() {
       z: nextZRef.current++,
     };
 
-    setImages((current) => [...current, nextNote]);
+    const after = {
+      ...before,
+      images: [...before.images, nextNote],
+    };
+    applyDocument(after);
+    recordHistoryEntry("Add Note", before, after);
     setSelectedId(noteId);
     setSelectedIds([noteId]);
   };
@@ -2276,7 +2427,12 @@ function App() {
         dataTransfer.items.add(file);
       }
 
-      void handleFiles(dataTransfer.files, getVisibleBoardCenter());
+      void handleFiles(
+        dataTransfer.files,
+        getVisibleBoardCenter(),
+        undefined,
+        "Paste Media",
+      );
     };
 
     window.addEventListener("paste", onPaste);
@@ -2311,10 +2467,16 @@ function App() {
 
     try {
       const snapshotState = parseSnapshot(await file.text());
+      const before = cloneDocument(documentRef.current);
+      const after = {
+        images: snapshotState.loadedImages,
+        frames: snapshotState.loadedFrames,
+        mediaTransforms: snapshotState.loadedMediaTransforms,
+        darkMode: snapshotState.darkMode,
+      };
 
-      setImages(snapshotState.loadedImages);
-      setFrames(snapshotState.loadedFrames);
-      setDarkMode(snapshotState.darkMode);
+      applyDocument(after);
+      recordHistoryEntry("Load Canvas", before, after);
       setSelectedFrameId(null);
       setSelectedId(null);
       setSelectedIds([]);
@@ -2329,7 +2491,6 @@ function App() {
       setGifFrameCounts({});
       setGifSeekFrames({});
       setBrokenMediaIds({});
-      setMediaTransforms(snapshotState.loadedMediaTransforms);
       setContextMenu(null);
 
       nextIdRef.current = snapshotState.nextId;
@@ -3885,10 +4046,15 @@ function App() {
                     dataTransfer.items.add(file);
                   }
 
-                  await handleFiles(dataTransfer.files, {
-                    x: menuTarget.worldX,
-                    y: menuTarget.worldY,
-                  });
+                  await handleFiles(
+                    dataTransfer.files,
+                    {
+                      x: menuTarget.worldX,
+                      y: menuTarget.worldY,
+                    },
+                    undefined,
+                    "Paste Media",
+                  );
                 })();
                 return;
               }
@@ -3965,6 +4131,7 @@ function App() {
         />
         <InspectorPanel
           selectedNode={inspectorNode}
+          historyEntries={historyEntries}
           transformSettings={selectedNodeTransform}
           mediaTransformCss={getTransformCss(selectedNodeTransform)}
           mediaTransformOrigin={getTransformOrigin(selectedNodeTransform)}

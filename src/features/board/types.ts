@@ -132,6 +132,24 @@ export type BoardSnapshotV6 = {
   darkMode: boolean;
 };
 
+export type BoardDocument = {
+  images: BoardImage[];
+  frames: BoardFrame[];
+  mediaTransforms: Record<number, MediaTransformSettings>;
+  darkMode: boolean;
+};
+
+export type HistoryVisibilityPriority = 0 | 1 | 2;
+
+export type HistoryEntry = {
+  id: string;
+  label: string;
+  timestamp: number;
+  visibilityPriority: HistoryVisibilityPriority;
+  before: BoardDocument;
+  after: BoardDocument;
+};
+
 export type MediaTimeline = {
   current: number;
   duration: number;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { BoardImage } from '../types'
+import type { BoardImage, HistoryEntry } from '../types'
 
 type TransformSettings = {
   flipHorizontal: boolean
@@ -12,10 +12,18 @@ type TransformSettings = {
   pivotY: number
 }
 
-type NumericTransformField = 'translateX' | 'translateY' | 'scaleX' | 'scaleY' | 'rotateDeg' | 'pivotX' | 'pivotY'
+type NumericTransformField =
+  | 'translateX'
+  | 'translateY'
+  | 'scaleX'
+  | 'scaleY'
+  | 'rotateDeg'
+  | 'pivotX'
+  | 'pivotY'
 
 type InspectorPanelProps = {
   selectedNode: BoardImage | null
+  historyEntries: HistoryEntry[]
   transformSettings: TransformSettings
   mediaTransformCss: string
   mediaTransformOrigin: string
@@ -58,6 +66,7 @@ const estimateDataUrlSize = (value?: string) => {
 
 function InspectorPanel({
   selectedNode,
+  historyEntries,
   transformSettings,
   mediaTransformCss,
   mediaTransformOrigin,
@@ -79,6 +88,7 @@ function InspectorPanel({
     min?: number
     max?: number
   } | null>(null)
+  const [showAllHistory, setShowAllHistory] = useState(false)
   const selectedMediaKey = selectedNode ? `${selectedNode.id}:${selectedNode.src}` : null
 
   const applyNumericField = useCallback(
@@ -173,11 +183,61 @@ function InspectorPanel({
     }
   }, [selectedNode])
 
+  const visibleHistoryEntries = historyEntries
+    .filter((entry) => {
+      if (entry.visibilityPriority === 2) {
+        return false
+      }
+      if (!showAllHistory) {
+        return entry.visibilityPriority === 0
+      }
+      return true
+    })
+    .slice(-30)
+    .reverse()
+
+  const historyPanel = (
+    <div className="inspector-history">
+      <div className="inspector-history-header">
+        <div className="inspector-tools-title">Session History</div>
+        <label className="inspector-history-toggle">
+          <input
+            type="checkbox"
+            checked={showAllHistory}
+            onChange={(event) => setShowAllHistory(event.target.checked)}
+          />
+          Show all
+        </label>
+      </div>
+      <div className="inspector-history-list">
+        {visibleHistoryEntries.length === 0 ? (
+          <div className="inspector-history-empty">No visible history yet.</div>
+        ) : (
+          visibleHistoryEntries.map((entry) => (
+            <div key={entry.id} className="inspector-history-item">
+              <div className="inspector-history-label">{entry.label}</div>
+              <div className="inspector-history-time">
+                {new Date(entry.timestamp).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+
   if (!selectedNode) {
     return (
       <aside className="inspector-sidebar">
         <div className="inspector-header">Inspector</div>
-        <div className="inspector-empty">Select a node to inspect it.</div>
+        <div className="inspector-body">
+          <div className="inspector-empty">Select a node to inspect it.</div>
+          {historyPanel}
+        </div>
       </aside>
     )
   }
@@ -464,6 +524,7 @@ function InspectorPanel({
             Reset Transform
           </button>
         </div>
+        {historyPanel}
       </div>
     </aside>
   )
