@@ -3,11 +3,10 @@ import type { BoardImage } from '../types'
 type NodeFooterProps = {
   image: BoardImage
   isMediaStack: boolean
-  onToggleSlideshow: () => void
   onToggleNoteMode: () => void
 }
 
-function NodeFooter({ image, isMediaStack, onToggleSlideshow, onToggleNoteMode }: NodeFooterProps) {
+function NodeFooter({ image, isMediaStack, onToggleNoteMode }: NodeFooterProps) {
   return (
     <figcaption className="node-footer">
       <span className="caption-name">{image.name}</span>
@@ -16,22 +15,6 @@ function NodeFooter({ image, isMediaStack, onToggleSlideshow, onToggleNoteMode }
           {Math.max(0, Math.min(image.activeMediaIndex ?? 0, (image.mediaItems?.length ?? 1) - 1)) + 1}/
           {image.mediaItems?.length}
         </span>
-      )}
-      {isMediaStack && (
-        <button
-          type="button"
-          className="slideshow-toggle"
-          onPointerDown={(event) => {
-            event.stopPropagation()
-          }}
-          onClick={(event) => {
-            event.stopPropagation()
-            onToggleSlideshow()
-          }}
-          aria-label={`${image.slideshowPlaying ? 'Pause' : 'Play'} slideshow for ${image.name}`}
-        >
-          {image.slideshowPlaying ? 'Pause' : 'Play'}
-        </button>
       )}
       {image.mediaKind === 'note' && (
         <button

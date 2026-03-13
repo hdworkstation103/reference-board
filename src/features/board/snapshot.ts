@@ -1,24 +1,37 @@
-import { MIN_IMAGE_WIDTH, NOTE_DEFAULT_ASPECT } from './constants'
-import type { BoardImage, BoardSnapshotV4, NodeMediaItem, PersistedGroup, SnapshotMedia, SnapshotNode } from './types'
+import { MIN_IMAGE_WIDTH, NOTE_DEFAULT_ASPECT } from "./constants";
+import type {
+  BoardFrame,
+  BoardImage,
+  BoardSnapshotV4,
+  BoardSnapshotV5,
+  NodeMediaItem,
+  SnapshotFrameNode,
+  SnapshotMedia,
+  SnapshotNode,
+} from "./types";
 
-export const buildSnapshot = (images: BoardImage[], groups: PersistedGroup[], darkMode: boolean): BoardSnapshotV4 => {
-  const media: Record<string, SnapshotMedia> = {}
-  const mediaIdBySignature = new Map<string, string>()
+export const buildSnapshot = (
+  images: BoardImage[],
+  frames: BoardFrame[],
+  darkMode: boolean,
+): BoardSnapshotV5 => {
+  const media: Record<string, SnapshotMedia> = {};
+  const mediaIdBySignature = new Map<string, string>();
 
   const nodes: SnapshotNode[] = images.map((image) => {
-    if (image.mediaKind === 'note') {
+    if (image.mediaKind === "note") {
       return {
-        kind: 'note',
+        kind: "note",
         id: image.id,
         name: image.name,
-        noteMarkdown: image.noteMarkdown ?? '',
-        noteMode: image.noteMode === 'editing' ? 'editing' : 'viewing',
+        noteMarkdown: image.noteMarkdown ?? "",
+        noteMode: image.noteMode === "editing" ? "editing" : "viewing",
         x: image.x,
         y: image.y,
         width: image.width,
         aspect: image.aspect,
         z: image.z,
-      }
+      };
     }
 
     const mediaItems =
@@ -33,19 +46,21 @@ export const buildSnapshot = (images: BoardImage[], groups: PersistedGroup[], da
               mediaKind: image.mediaKind,
               isGif: image.isGif,
             },
-          ]
+          ];
 
     const mediaIds = mediaItems.map((mediaItem) => {
-      const sourceDataUrl = mediaItem.sourceDataUrl || mediaItem.src
-      const hasSource = typeof mediaItem.sourceUrl === 'string' && mediaItem.sourceUrl.length > 0
+      const sourceDataUrl = mediaItem.sourceDataUrl || mediaItem.src;
+      const hasSource =
+        typeof mediaItem.sourceUrl === "string" &&
+        mediaItem.sourceUrl.length > 0;
       const signature = hasSource
-        ? `${mediaItem.mediaKind}:source:${mediaItem.isGif ? '1' : '0'}:${mediaItem.sourceUrl}`
-        : `${mediaItem.mediaKind}:data:${mediaItem.isGif ? '1' : '0'}:${sourceDataUrl}`
+        ? `${mediaItem.mediaKind}:source:${mediaItem.isGif ? "1" : "0"}:${mediaItem.sourceUrl}`
+        : `${mediaItem.mediaKind}:data:${mediaItem.isGif ? "1" : "0"}:${sourceDataUrl}`;
 
-      let mediaId = mediaIdBySignature.get(signature)
+      let mediaId = mediaIdBySignature.get(signature);
       if (!mediaId) {
-        mediaId = `m${mediaIdBySignature.size + 1}`
-        mediaIdBySignature.set(signature, mediaId)
+        mediaId = `m${mediaIdBySignature.size + 1}`;
+        mediaIdBySignature.set(signature, mediaId);
         media[mediaId] = {
           id: mediaId,
           name: mediaItem.name,
@@ -53,17 +68,20 @@ export const buildSnapshot = (images: BoardImage[], groups: PersistedGroup[], da
           isGif: mediaItem.isGif,
           sourceDataUrl: hasSource ? undefined : sourceDataUrl,
           sourceUrl: hasSource ? mediaItem.sourceUrl : undefined,
-        }
+        };
       }
 
-      return mediaId
-    })
+      return mediaId;
+    });
 
     return {
-      kind: 'media',
+      kind: "media",
       id: image.id,
       mediaIds,
-      activeMediaIndex: Math.max(0, Math.min(image.activeMediaIndex ?? 0, mediaIds.length - 1)),
+      activeMediaIndex: Math.max(
+        0,
+        Math.min(image.activeMediaIndex ?? 0, mediaIds.length - 1),
+      ),
       slideshowPlaying: Boolean(image.slideshowPlaying),
       paused: image.paused,
       x: image.x,
@@ -71,102 +89,136 @@ export const buildSnapshot = (images: BoardImage[], groups: PersistedGroup[], da
       width: image.width,
       aspect: image.aspect,
       z: image.z,
-    }
-  })
+    };
+  });
+
+  const serializedFrames: SnapshotFrameNode[] = frames.map((frame) => ({
+    kind: "frame",
+    id: frame.id,
+    name: frame.name,
+    memberIds: [...frame.memberIds],
+    collapsed: frame.collapsed,
+    activeMemberIndex: frame.activeMemberIndex,
+    slideshowPlaying: frame.slideshowPlaying,
+    z: frame.z,
+  }));
 
   return {
-    version: 4,
+    version: 5,
     createdAt: new Date().toISOString(),
     media,
     nodes,
-    groups: groups.map((group) => ({ id: group.id, memberIds: [...group.memberIds] })),
+    frames: serializedFrames,
     darkMode,
-  }
-}
+  };
+};
 
 export const parseSnapshot = (text: string) => {
-  const parsed = JSON.parse(text) as Partial<BoardSnapshotV4>
-  if (!parsed || parsed.version !== 4 || !parsed.media || !Array.isArray(parsed.nodes)) {
-    throw new Error('Unsupported snapshot format')
+  const parsed = JSON.parse(text) as Partial<BoardSnapshotV4> | Partial<BoardSnapshotV5>;
+  if (
+    !parsed ||
+    !parsed.media ||
+    !Array.isArray(parsed.nodes) ||
+    (parsed.version !== 4 && parsed.version !== 5)
+  ) {
+    throw new Error("Unsupported snapshot format");
   }
 
-  const mediaMap = parsed.media as Record<string, Partial<SnapshotMedia>>
-  const loadedImages = parsed.nodes
-    .map<BoardImage | null>((node) => {
+  const mediaMap = parsed.media as Record<string, Partial<SnapshotMedia>>;
+  const parsedNodes = parsed.nodes as SnapshotNode[];
+  const loadedImages = parsedNodes
+    .map<BoardImage | null>((node: SnapshotNode) => {
       if (
-        typeof node?.id !== 'number' ||
-        typeof node?.x !== 'number' ||
-        typeof node?.y !== 'number' ||
-        typeof node?.width !== 'number' ||
-        typeof node?.aspect !== 'number' ||
-        typeof node?.z !== 'number'
+        typeof node?.id !== "number" ||
+        typeof node?.x !== "number" ||
+        typeof node?.y !== "number" ||
+        typeof node?.width !== "number" ||
+        typeof node?.aspect !== "number" ||
+        typeof node?.z !== "number"
       ) {
-        return null
+        return null;
       }
 
-      if (node.kind === 'note') {
-        if (typeof node.name !== 'string' || typeof node.noteMarkdown !== 'string') {
-          return null
+      if (node.kind === "note") {
+        if (
+          typeof node.name !== "string" ||
+          typeof node.noteMarkdown !== "string"
+        ) {
+          return null;
         }
 
         return {
           id: node.id,
-          src: '',
-          sourceDataUrl: '',
+          src: "",
+          sourceDataUrl: "",
           name: node.name,
-          mediaKind: 'note' as const,
+          mediaKind: "note" as const,
           isGif: false,
           paused: false,
           noteMarkdown: node.noteMarkdown,
-          noteMode: node.noteMode === 'editing' ? 'editing' : ('viewing' as const),
+          noteMode:
+            node.noteMode === "editing" ? "editing" : ("viewing" as const),
           x: node.x,
           y: node.y,
           width: Math.max(MIN_IMAGE_WIDTH, node.width),
           aspect: node.aspect > 0 ? node.aspect : NOTE_DEFAULT_ASPECT,
           z: node.z,
-        }
+        };
       }
 
-      if (node.kind !== 'media' || !Array.isArray(node.mediaIds)) {
-        return null
+      if (node.kind !== "media" || !Array.isArray(node.mediaIds)) {
+        return null;
       }
 
       const mediaItems = node.mediaIds
-        .map((mediaId) => mediaMap[mediaId])
-        .filter((mediaEntry): mediaEntry is Partial<SnapshotMedia> => Boolean(mediaEntry))
-        .map((mediaEntry) => {
+        .map((mediaId: string) => mediaMap[mediaId])
+        .filter((mediaEntry): mediaEntry is Partial<SnapshotMedia> =>
+          Boolean(mediaEntry),
+        )
+        .map((mediaEntry: Partial<SnapshotMedia>) => {
           if (
-            typeof mediaEntry.name !== 'string' ||
-            (mediaEntry.mediaKind !== 'image' && mediaEntry.mediaKind !== 'video')
+            typeof mediaEntry.name !== "string" ||
+            (mediaEntry.mediaKind !== "image" &&
+              mediaEntry.mediaKind !== "video")
           ) {
-            return null
+            return null;
           }
 
           const preferredSrc =
-            typeof mediaEntry.sourceUrl === 'string' && mediaEntry.sourceUrl.length > 0
+            typeof mediaEntry.sourceUrl === "string" &&
+            mediaEntry.sourceUrl.length > 0
               ? mediaEntry.sourceUrl
-              : typeof mediaEntry.sourceDataUrl === 'string'
+              : typeof mediaEntry.sourceDataUrl === "string"
                 ? mediaEntry.sourceDataUrl
-                : ''
+                : "";
 
           const nextItem: NodeMediaItem = {
             src: preferredSrc,
-            sourceDataUrl: typeof mediaEntry.sourceDataUrl === 'string' ? mediaEntry.sourceDataUrl : undefined,
-            sourceUrl: typeof mediaEntry.sourceUrl === 'string' ? mediaEntry.sourceUrl : undefined,
+            sourceDataUrl:
+              typeof mediaEntry.sourceDataUrl === "string"
+                ? mediaEntry.sourceDataUrl
+                : undefined,
+            sourceUrl:
+              typeof mediaEntry.sourceUrl === "string"
+                ? mediaEntry.sourceUrl
+                : undefined,
             name: mediaEntry.name,
             mediaKind: mediaEntry.mediaKind,
             isGif: Boolean(mediaEntry.isGif),
-          }
-          return nextItem
+          };
+          return nextItem;
         })
-        .filter((item): item is NodeMediaItem => item !== null)
+        .filter((item): item is NodeMediaItem => item !== null);
 
       if (mediaItems.length === 0) {
-        return null
+        return null;
       }
 
-      const activeMediaIndex = Math.max(0, Math.min(node.activeMediaIndex ?? 0, mediaItems.length - 1))
-      const activeMedia = mediaItems[activeMediaIndex]
+      const activeMediaIndex = Math.max(
+        0,
+        Math.min(node.activeMediaIndex ?? 0, mediaItems.length - 1),
+      );
+      const activeMedia = mediaItems[activeMediaIndex];
 
       return {
         id: node.id,
@@ -185,28 +237,89 @@ export const parseSnapshot = (text: string) => {
         width: Math.max(MIN_IMAGE_WIDTH, node.width),
         aspect: node.aspect > 0 ? node.aspect : 1,
         z: node.z,
-      }
+      };
     })
-    .filter((item): item is BoardImage => item !== null)
+    .filter((item): item is BoardImage => item !== null);
 
-  const validIds = new Set(loadedImages.map((item) => item.id))
-  const loadedGroups = Array.isArray(parsed.groups)
-    ? parsed.groups
-        .map((group, index) => ({
-          id: typeof group?.id === 'number' ? group.id : index + 1,
-          memberIds: Array.isArray(group?.memberIds)
-            ? group.memberIds.filter((id): id is number => typeof id === 'number' && validIds.has(id))
-            : [],
-        }))
-        .filter((group) => group.memberIds.length > 1)
-    : []
+  const validIds = new Set(loadedImages.map((item) => item.id));
+  const parsedFrames = "frames" in parsed ? parsed.frames : undefined;
+  const parsedGroups = "groups" in parsed ? parsed.groups : undefined;
+  const loadedFrames = Array.isArray(parsedFrames)
+    ? parsedFrames
+        .map<BoardFrame | null>((frame: SnapshotFrameNode) => {
+          if (
+            typeof frame?.id !== "number" ||
+            typeof frame?.name !== "string" ||
+            typeof frame?.z !== "number"
+          ) {
+            return null;
+          }
+
+          const memberIds = Array.isArray(frame.memberIds)
+            ? frame.memberIds.filter(
+                (id): id is number =>
+                  typeof id === "number" && validIds.has(id),
+              )
+            : [];
+
+          if (memberIds.length === 0) {
+            return null;
+          }
+
+          return {
+            id: frame.id,
+            name: frame.name,
+            memberIds,
+            collapsed: Boolean(frame.collapsed),
+            activeMemberIndex: Math.max(
+              0,
+              Math.min(frame.activeMemberIndex ?? 0, memberIds.length - 1),
+            ),
+            slideshowPlaying: Boolean(frame.slideshowPlaying),
+            z: frame.z,
+          };
+        })
+        .filter((frame): frame is BoardFrame => frame !== null)
+    : Array.isArray(parsedGroups)
+      ? parsedGroups
+          .map((group, index) => {
+            const memberIds = Array.isArray(group?.memberIds)
+              ? group.memberIds.filter(
+                  (id): id is number =>
+                    typeof id === "number" && validIds.has(id),
+                )
+              : [];
+            if (memberIds.length < 2) {
+              return null;
+            }
+
+            return {
+              id: typeof group?.id === "number" ? group.id : index + 1,
+              name: `Frame ${index + 1}`,
+              memberIds,
+              collapsed: false,
+              activeMemberIndex: 0,
+              slideshowPlaying: false,
+              z:
+                loadedImages.reduce((max, item) => Math.max(max, item.z), 0) +
+                index +
+                1,
+            };
+          })
+          .filter((frame): frame is BoardFrame => frame !== null)
+      : [];
 
   return {
     darkMode: Boolean(parsed.darkMode),
-    loadedGroups,
+    loadedFrames,
     loadedImages,
-    nextGroupId: loadedGroups.reduce((max, group) => Math.max(max, group.id), 0) + 1,
+    nextFrameId:
+      loadedFrames.reduce((max, frame) => Math.max(max, frame.id), 0) + 1,
     nextId: loadedImages.reduce((max, item) => Math.max(max, item.id), 0) + 1,
-    nextZ: loadedImages.reduce((max, item) => Math.max(max, item.z), 0) + 1,
-  }
-}
+    nextZ:
+      Math.max(
+        loadedImages.reduce((max, item) => Math.max(max, item.z), 0),
+        loadedFrames.reduce((max, frame) => Math.max(max, frame.z), 0),
+      ) + 1,
+  };
+};

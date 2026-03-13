@@ -27,7 +27,6 @@ type BoardNodeProps = {
   onDisableSelectionShader: () => void
   onNoteFocusChange: (focused: boolean) => void
   onNoteMarkdownChange: (id: number, markdown: string) => void
-  onToggleSlideshow: (id: number) => void
   onToggleNoteMode: (id: number) => void
   setVideoRef: (id: number, element: HTMLVideoElement | null) => void
   onVideoLoadedMetadata: (id: number, event: React.SyntheticEvent<HTMLVideoElement>) => void
@@ -58,7 +57,6 @@ function BoardNode({
   onDisableSelectionShader,
   onNoteFocusChange,
   onNoteMarkdownChange,
-  onToggleSlideshow,
   onToggleNoteMode,
   setVideoRef,
   onVideoLoadedMetadata,
@@ -140,9 +138,6 @@ function BoardNode({
       <NodeFooter
         image={image}
         isMediaStack={isMediaStack}
-        onToggleSlideshow={() => {
-          onToggleSlideshow(image.id)
-        }}
         onToggleNoteMode={() => {
           onToggleNoteMode(image.id)
         }}
