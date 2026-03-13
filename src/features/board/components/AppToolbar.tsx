@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react'
+
 type AppToolbarProps = {
   darkMode: boolean
   imageCount: number
@@ -23,6 +25,35 @@ function AppToolbar({
   onClearBoard,
   onToggleDarkMode,
 }: AppToolbarProps) {
+  const [openMenu, setOpenMenu] = useState<'file' | 'view' | null>(null)
+  const navRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (!openMenu) {
+      return
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (navRef.current?.contains(event.target as Node)) {
+        return
+      }
+      setOpenMenu(null)
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenMenu(null)
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown, true)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown, true)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [openMenu])
+
   return (
     <header className="toolbar">
       <input
@@ -49,39 +80,82 @@ function AppToolbar({
         PureRef Lite
       </div>
 
-      <nav className="menu-bar" aria-label="Board menu">
-        <details className="menu-group">
-          <summary className="menu-trigger">File</summary>
-          <div className="menu-panel" role="menu" aria-label="File menu">
-            <label className="menu-item" htmlFor="image-picker">
+      <nav ref={navRef} className="menu-bar" aria-label="Board menu">
+        <div className={`menu-group ${openMenu === 'file' ? 'open' : ''}`}>
+          <button
+            type="button"
+            className="menu-trigger"
+            aria-expanded={openMenu === 'file'}
+            aria-haspopup="menu"
+            onClick={() => {
+              setOpenMenu((current) => (current === 'file' ? null : 'file'))
+            }}
+          >
+            File
+          </button>
+          {openMenu === 'file' && (
+            <div className="menu-panel" role="menu" aria-label="File menu">
+            <label className="menu-item" htmlFor="image-picker" onClick={() => {
+              setOpenMenu(null)
+            }}>
               Add Images
             </label>
-            <button type="button" className="menu-item" onClick={onAddNote}>
+            <button type="button" className="menu-item" onClick={() => {
+              setOpenMenu(null)
+              onAddNote()
+            }}>
               Add Note
             </button>
-            <label className="menu-item" htmlFor="version-picker">
+            <label className="menu-item" htmlFor="version-picker" onClick={() => {
+              setOpenMenu(null)
+            }}>
               Load Canvas
             </label>
-            <button type="button" className="menu-item" onClick={onSaveVersion}>
+            <button type="button" className="menu-item" onClick={() => {
+              setOpenMenu(null)
+              onSaveVersion()
+            }}>
               Save Canvas
             </button>
-            <button type="button" className="menu-item danger" onClick={onClearBoard}>
+            <button type="button" className="menu-item danger" onClick={() => {
+              setOpenMenu(null)
+              onClearBoard()
+            }}>
               Clear Board
             </button>
-          </div>
-        </details>
+            </div>
+          )}
+        </div>
 
-        <details className="menu-group">
-          <summary className="menu-trigger">View</summary>
-          <div className="menu-panel" role="menu" aria-label="View menu">
-            <button type="button" className="menu-item" onClick={onCenterView}>
+        <div className={`menu-group ${openMenu === 'view' ? 'open' : ''}`}>
+          <button
+            type="button"
+            className="menu-trigger"
+            aria-expanded={openMenu === 'view'}
+            aria-haspopup="menu"
+            onClick={() => {
+              setOpenMenu((current) => (current === 'view' ? null : 'view'))
+            }}
+          >
+            View
+          </button>
+          {openMenu === 'view' && (
+            <div className="menu-panel" role="menu" aria-label="View menu">
+            <button type="button" className="menu-item" onClick={() => {
+              setOpenMenu(null)
+              onCenterView()
+            }}>
               Reset View
             </button>
-            <button type="button" className="menu-item" onClick={onToggleDarkMode}>
+            <button type="button" className="menu-item" onClick={() => {
+              setOpenMenu(null)
+              onToggleDarkMode()
+            }}>
               {darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             </button>
-          </div>
-        </details>
+            </div>
+          )}
+        </div>
       </nav>
 
       <div className="toolbar-meta">

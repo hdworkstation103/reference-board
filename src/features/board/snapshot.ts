@@ -4,6 +4,8 @@ import type {
   BoardImage,
   BoardSnapshotV4,
   BoardSnapshotV5,
+  BoardSnapshotV6,
+  MediaTransformSettings,
   NodeMediaItem,
   SnapshotFrameNode,
   SnapshotMedia,
@@ -13,8 +15,9 @@ import type {
 export const buildSnapshot = (
   images: BoardImage[],
   frames: BoardFrame[],
+  mediaTransforms: Record<number, MediaTransformSettings>,
   darkMode: boolean,
-): BoardSnapshotV5 => {
+): BoardSnapshotV6 => {
   const media: Record<string, SnapshotMedia> = {};
   const mediaIdBySignature = new Map<string, string>();
 
@@ -104,22 +107,23 @@ export const buildSnapshot = (
   }));
 
   return {
-    version: 5,
+    version: 6,
     createdAt: new Date().toISOString(),
     media,
     nodes,
     frames: serializedFrames,
+    mediaTransforms,
     darkMode,
   };
 };
 
 export const parseSnapshot = (text: string) => {
-  const parsed = JSON.parse(text) as Partial<BoardSnapshotV4> | Partial<BoardSnapshotV5>;
+  const parsed = JSON.parse(text) as Partial<BoardSnapshotV4> | Partial<BoardSnapshotV5> | Partial<BoardSnapshotV6>;
   if (
     !parsed ||
     !parsed.media ||
     !Array.isArray(parsed.nodes) ||
-    (parsed.version !== 4 && parsed.version !== 5)
+    (parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6)
   ) {
     throw new Error("Unsupported snapshot format");
   }
@@ -309,10 +313,52 @@ export const parseSnapshot = (text: string) => {
           .filter((frame): frame is BoardFrame => frame !== null)
       : [];
 
+  const loadedMediaTransforms = (() => {
+    if (!("mediaTransforms" in parsed) || !parsed.mediaTransforms || typeof parsed.mediaTransforms !== "object") {
+      return {} as Record<number, MediaTransformSettings>;
+    }
+
+    const next: Record<number, MediaTransformSettings> = {};
+    for (const [key, value] of Object.entries(parsed.mediaTransforms)) {
+      const id = Number(key);
+      if (!Number.isFinite(id) || !validIds.has(id) || !value || typeof value !== "object") {
+        continue;
+      }
+
+      const candidate = value as Partial<MediaTransformSettings>;
+      if (
+        typeof candidate.flipHorizontal !== "boolean" ||
+        typeof candidate.translateX !== "number" ||
+        typeof candidate.translateY !== "number" ||
+        typeof candidate.scaleX !== "number" ||
+        typeof candidate.scaleY !== "number" ||
+        typeof candidate.rotateDeg !== "number" ||
+        typeof candidate.pivotX !== "number" ||
+        typeof candidate.pivotY !== "number"
+      ) {
+        continue;
+      }
+
+      next[id] = {
+        flipHorizontal: candidate.flipHorizontal,
+        translateX: candidate.translateX,
+        translateY: candidate.translateY,
+        scaleX: candidate.scaleX,
+        scaleY: candidate.scaleY,
+        rotateDeg: candidate.rotateDeg,
+        pivotX: candidate.pivotX,
+        pivotY: candidate.pivotY,
+      };
+    }
+
+    return next;
+  })();
+
   return {
     darkMode: Boolean(parsed.darkMode),
     loadedFrames,
     loadedImages,
+    loadedMediaTransforms,
     nextFrameId:
       loadedFrames.reduce((max, frame) => Math.max(max, frame.id), 0) + 1,
     nextId: loadedImages.reduce((max, item) => Math.max(max, item.id), 0) + 1,

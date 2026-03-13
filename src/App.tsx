@@ -53,6 +53,7 @@ import type {
   GroupOverlayState,
   InteractionState,
   MarqueeState,
+  MediaTransformSettings,
   MediaTimeline,
   MoveModeState,
   NodeMediaItem,
@@ -85,16 +86,6 @@ type GifDecoderCtor = new (options: {
   data: Blob;
   type: string;
 }) => GifDecoderLike;
-type MediaTransformSettings = {
-  flipHorizontal: boolean;
-  translateX: number;
-  translateY: number;
-  scaleX: number;
-  scaleY: number;
-  rotateDeg: number;
-  pivotX: number;
-  pivotY: number;
-};
 
 const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
   flipHorizontal: false,
@@ -119,6 +110,7 @@ function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [selectedFrameId, setSelectedFrameId] = useState<number | null>(null);
+  const [renamingFrameId, setRenamingFrameId] = useState<number | null>(null);
   const [seekPanelId, setSeekPanelId] = useState<number | null>(null);
   const [videoTimelines, setVideoTimelines] = useState<
     Record<number, MediaTimeline>
@@ -359,6 +351,15 @@ function App() {
             ],
           },
         ];
+      case "frame":
+        return [
+          {
+            title: contextMenu.target.frameName,
+            items: [
+              { id: "frame.layout", label: "Layout", shortcut: "Ctrl+L" },
+            ],
+          },
+        ];
     }
   }, [contextMenu]);
   const appContentStyle = useMemo(
@@ -496,6 +497,54 @@ function App() {
     );
   };
 
+  const layoutNodes = (nodeIds: number[]) => {
+    setImages((current) => {
+      const selected = current.filter((item) => nodeIds.includes(item.id));
+      if (selected.length < 2) {
+        return current;
+      }
+
+      const ordered = [...selected].sort((a, b) => a.y - b.y || a.x - b.x);
+      const cols = Math.ceil(Math.sqrt(ordered.length));
+      const gap = 24;
+      const anchorX = Math.min(...ordered.map((item) => item.x));
+      const anchorY = Math.min(...ordered.map((item) => item.y));
+      const positions = new Map<number, { x: number; y: number }>();
+
+      let currentX = anchorX;
+      let currentY = anchorY;
+      let rowHeight = 0;
+      let col = 0;
+
+      for (const item of ordered) {
+        if (col >= cols) {
+          currentY += rowHeight + gap;
+          currentX = anchorX;
+          rowHeight = 0;
+          col = 0;
+        }
+
+        positions.set(item.id, { x: currentX, y: currentY });
+        currentX += item.width + gap;
+        rowHeight = Math.max(rowHeight, getItemHeight(item));
+        col += 1;
+      }
+
+      return current.map((item) => {
+        const nextPosition = positions.get(item.id);
+        if (!nextPosition) {
+          return item;
+        }
+
+        return {
+          ...item,
+          x: nextPosition.x,
+          y: nextPosition.y,
+        };
+      });
+    });
+  };
+
   const setFramePreview = (frameId: number, nodeId: number) => {
     setFrames((current) =>
       current.map((frame) => {
@@ -514,6 +563,20 @@ function App() {
         };
       }),
     );
+  };
+
+  const renameFrame = (frameId: number, name: string) => {
+    setFrames((current) =>
+      current.map((frame) =>
+        frame.id === frameId
+          ? {
+              ...frame,
+              name,
+            }
+          : frame,
+      ),
+    );
+    setRenamingFrameId(null);
   };
 
   const createFrameFromIds = (memberIds: number[], name?: string) => {
@@ -1143,6 +1206,10 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (renamingFrameId !== null) {
+        return;
+      }
+
       if (isEditorFocused) {
         return;
       }
@@ -1215,6 +1282,16 @@ function App() {
 
         event.preventDefault();
         toggleFrameCollapsed(targetFrame.id);
+        return;
+      }
+
+      if (!event.ctrlKey && !event.altKey && !event.metaKey && event.key === "F2") {
+        if (selectedFrameId === null) {
+          return;
+        }
+
+        event.preventDefault();
+        setRenamingFrameId(selectedFrameId);
         return;
       }
 
@@ -1491,54 +1568,15 @@ function App() {
           }
 
           if (isLayoutShortcut) {
-            const ordered = [...selected].sort(
-              (a, b) => a.y - b.y || a.x - b.x,
-            );
-            const cols = Math.ceil(Math.sqrt(ordered.length));
-            const gap = 24;
-            const anchorX = Math.min(...ordered.map((item) => item.x));
-            const anchorY = Math.min(...ordered.map((item) => item.y));
-            const positions = new Map<number, { x: number; y: number }>();
-
-            let currentX = anchorX;
-            let currentY = anchorY;
-            let rowHeight = 0;
-            let col = 0;
-
-            for (const item of ordered) {
-              if (col >= cols) {
-                currentY += rowHeight + gap;
-                currentX = anchorX;
-                rowHeight = 0;
-                col = 0;
-              }
-
-              positions.set(item.id, { x: currentX, y: currentY });
-              currentX += item.width + gap;
-              rowHeight = Math.max(rowHeight, getItemHeight(item));
-              col += 1;
-            }
-
-            return current.map((item) => {
-              if (!selectedIds.includes(item.id)) {
-                return item;
-              }
-
-              const nextPosition = positions.get(item.id);
-              if (!nextPosition) {
-                return item;
-              }
-
-              return {
-                ...item,
-                x: nextPosition.x,
-                y: nextPosition.y,
-              };
-            });
+            return current;
           }
 
           return current;
         });
+        if (isLayoutShortcut) {
+          layoutNodes(selectedIds);
+          return;
+        }
         return;
       }
 
@@ -1608,7 +1646,7 @@ function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [activeFrames, images, isEditorFocused, moveMode, scaleMode, selectedCollapsedFrame, selectedFrameId, selectedId, selectedIds]);
+  }, [activeFrames, images, isEditorFocused, moveMode, renamingFrameId, scaleMode, selectedCollapsedFrame, selectedFrameId, selectedId, selectedIds]);
 
   useEffect(() => {
     const shouldPlay = new Set(
@@ -1692,6 +1730,7 @@ function App() {
     const frameStillExists = activeFrames.some((frame) => frame.id === selectedFrameId);
     if (!frameStillExists) {
       setSelectedFrameId(null);
+      setRenamingFrameId(null);
     }
   }, [activeFrames, selectedFrameId]);
 
@@ -2074,6 +2113,18 @@ function App() {
   const handleBoardDrop = (event: ReactDragEvent<HTMLDivElement>) => {
     event.preventDefault();
 
+    const droppedSnapshot = Array.from(event.dataTransfer.files).find(
+      (file) =>
+        file.type === "application/json" ||
+        file.name.toLowerCase().endsWith(".json"),
+    );
+    if (droppedSnapshot) {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(droppedSnapshot);
+      void loadVersion(dataTransfer.files);
+      return;
+    }
+
     const droppedFiles = Array.from(event.dataTransfer.files).filter(
       (file) =>
         file.type.startsWith("image/") || file.type.startsWith("video/"),
@@ -2235,7 +2286,12 @@ function App() {
   }, [isEditorFocused]);
 
   const saveVersion = () => {
-    const snapshot = buildSnapshot(images, activeFrames, darkMode);
+    const snapshot = buildSnapshot(
+      images,
+      activeFrames,
+      activeMediaTransforms,
+      darkMode,
+    );
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
       type: "application/json",
     });
@@ -2273,7 +2329,7 @@ function App() {
       setGifFrameCounts({});
       setGifSeekFrames({});
       setBrokenMediaIds({});
-      setMediaTransforms({});
+      setMediaTransforms(snapshotState.loadedMediaTransforms);
       setContextMenu(null);
 
       nextIdRef.current = snapshotState.nextId;
@@ -2565,6 +2621,31 @@ function App() {
               previewFrameId: parentFrame?.id ?? null,
               selectedIds: activeSelection,
             },
+    });
+  };
+
+  const onFrameContextMenu = (event: ReactMouseEvent, frameId: number) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const frame = activeFrames.find((candidate) => candidate.id === frameId);
+    if (!frame) {
+      return;
+    }
+
+    setSelectedFrameId(frameId);
+    setSelectedId(null);
+    setSelectedIds([]);
+
+    openContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      target: {
+        kind: "frame",
+        frameId,
+        frameName: frame.name,
+        memberIds: frame.memberIds,
+      },
     });
   };
 
@@ -3477,14 +3558,26 @@ function App() {
                   frame={frame}
                   bounds={displayBounds}
                   selected={selectedFrameId === frame.id}
+                  renameRequested={renamingFrameId === frame.id}
                   displayZIndex={Math.min(...frame.memberIds.map((id) => images.find((item) => item.id === id)?.z ?? frame.z)) - 1}
                   activeItem={activeItem}
                   hiddenCount={frame.memberIds.length}
                   onMovePointerDown={startFrameMove}
+                  onContextMenu={onFrameContextMenu}
                   onSelect={(frameId) => {
+                    setRenamingFrameId(null);
                     setSelectedFrameId(frameId);
                     setSelectedId(null);
                     setSelectedIds([]);
+                  }}
+                  onRename={renameFrame}
+                  onRenameStateChange={(frameId, active) => {
+                    setRenamingFrameId((current) => {
+                      if (active) {
+                        return frameId;
+                      }
+                      return current === frameId ? null : current;
+                    });
                   }}
                   onToggleCollapsed={toggleFrameCollapsed}
                   onToggleSlideshow={toggleFrameSlideshow}
@@ -3840,6 +3933,14 @@ function App() {
               actionId === "selection.wrap-group"
             ) {
               createFrameFromIds(menuTarget.selectedIds);
+              return;
+            }
+
+            if (
+              menuTarget.kind === "frame" &&
+              actionId === "frame.layout"
+            ) {
+              layoutNodes(menuTarget.memberIds);
               return;
             }
 

@@ -30,6 +30,17 @@ export type BoardFrame = {
   z: number;
 };
 
+export type MediaTransformSettings = {
+  flipHorizontal: boolean;
+  translateX: number;
+  translateY: number;
+  scaleX: number;
+  scaleY: number;
+  rotateDeg: number;
+  pivotX: number;
+  pivotY: number;
+};
+
 export type PreparedMedia = Pick<
   BoardImage,
   | "id"
@@ -108,6 +119,16 @@ export type BoardSnapshotV5 = {
   media: Record<string, SnapshotMedia>;
   nodes: SnapshotNode[];
   frames: SnapshotFrameNode[];
+  darkMode: boolean;
+};
+
+export type BoardSnapshotV6 = {
+  version: 6;
+  createdAt: string;
+  media: Record<string, SnapshotMedia>;
+  nodes: SnapshotNode[];
+  frames: SnapshotFrameNode[];
+  mediaTransforms: Record<number, MediaTransformSettings>;
   darkMode: boolean;
 };
 
@@ -263,6 +284,12 @@ export type ContextMenuTarget =
       kind: "selection";
       anchorId: number;
       selectedIds: number[];
+    }
+  | {
+      kind: "frame";
+      frameId: number;
+      frameName: string;
+      memberIds: number[];
     };
 
 export type ContextMenuState = {
