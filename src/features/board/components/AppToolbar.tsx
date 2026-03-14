@@ -4,6 +4,7 @@ type AppToolbarProps = {
   darkMode: boolean
   imageCount: number
   enableSelectionShader: boolean
+  shaderCompositingEnabled: boolean
   shaderSandboxOpen: boolean
   onAddFiles: (files: FileList | null) => void
   onSaveVersion: () => void
@@ -12,6 +13,7 @@ type AppToolbarProps = {
   onCenterView: () => void
   onClearBoard: () => void
   onToggleDarkMode: () => void
+  onToggleShaderCompositing: () => void
   onToggleShaderSandbox: () => void
 }
 
@@ -19,6 +21,7 @@ function AppToolbar({
   darkMode,
   imageCount,
   enableSelectionShader,
+  shaderCompositingEnabled,
   shaderSandboxOpen,
   onAddFiles,
   onSaveVersion,
@@ -27,6 +30,7 @@ function AppToolbar({
   onCenterView,
   onClearBoard,
   onToggleDarkMode,
+  onToggleShaderCompositing,
   onToggleShaderSandbox,
 }: AppToolbarProps) {
   const [openMenu, setOpenMenu] = useState<'file' | 'view' | null>(null)
@@ -156,6 +160,12 @@ function AppToolbar({
               onToggleDarkMode()
             }}>
               {darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            </button>
+            <button type="button" className="menu-item" onClick={() => {
+              setOpenMenu(null)
+              onToggleShaderCompositing()
+            }}>
+              {shaderCompositingEnabled ? 'Disable Shader Compositing' : 'Enable Shader Compositing'}
             </button>
             <button type="button" className="menu-item" onClick={() => {
               setOpenMenu(null)

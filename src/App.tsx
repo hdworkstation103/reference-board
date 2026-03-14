@@ -135,6 +135,7 @@ function App() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [enableSelectionShader, setEnableSelectionShader] = useState(true);
+  const [shaderCompositingEnabled, setShaderCompositingEnabled] = useState(true);
   const [showShaderSandbox, setShowShaderSandbox] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(300);
   const [inspectorResize, setInspectorResize] = useState<{
@@ -384,6 +385,13 @@ function App() {
         "--inspector-width": `${inspectorWidth}px`,
       }) as CSSProperties,
     [inspectorWidth],
+  );
+  const appShellStyle = useMemo(
+    () =>
+      ({
+        "--shader-composite-opacity": shaderCompositingEnabled ? 1 : 0,
+      }) as CSSProperties,
+    [shaderCompositingEnabled],
   );
 
   const getMediaTransformForNode = (id: number) =>
@@ -3458,11 +3466,15 @@ function App() {
   };
 
   return (
-    <main className={`app-shell ${darkMode ? "dark" : ""}`}>
+    <main
+      className={`app-shell ${darkMode ? "dark" : ""}`}
+      style={appShellStyle}
+    >
       <AppToolbar
         darkMode={darkMode}
         imageCount={images.length}
         enableSelectionShader={enableSelectionShader}
+        shaderCompositingEnabled={shaderCompositingEnabled}
         shaderSandboxOpen={showShaderSandbox}
         onAddFiles={(files) => {
           void handleFiles(files);
@@ -3476,6 +3488,9 @@ function App() {
         onClearBoard={clearBoard}
         onToggleDarkMode={() => {
           setDarkMode((current) => !current);
+        }}
+        onToggleShaderCompositing={() => {
+          setShaderCompositingEnabled((current) => !current);
         }}
         onToggleShaderSandbox={() => {
           setShowShaderSandbox((current) => !current);

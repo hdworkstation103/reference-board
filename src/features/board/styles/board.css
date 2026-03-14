@@ -937,7 +937,7 @@ label.menu-item {
   border-radius: var(--node-border-radius);
   overflow: hidden;
   pointer-events: none;
-  opacity: 1;
+  opacity: var(--shader-composite-opacity, 1);
   mix-blend-mode: normal;
   z-index: 2;
   border: 2px solid color-mix(in srgb, var(--node-selection-color) 95%, white 5%);
@@ -1031,7 +1031,7 @@ label.menu-item {
   border-top-left-radius: 7px;
   border-top-right-radius: 7px;
   mix-blend-mode: screen;
-  opacity: 0.42;
+  opacity: calc(0.42 * var(--shader-composite-opacity, 1));
 }
 
 .media-shine-layer canvas {
@@ -1284,7 +1284,7 @@ label.menu-item {
 }
 
 .app-shell.dark .media-shine-layer {
-  opacity: 0.5;
+  opacity: calc(0.5 * var(--shader-composite-opacity, 1));
 }
 
 .app-shell.dark .stack-count {
