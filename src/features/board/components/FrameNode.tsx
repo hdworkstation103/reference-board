@@ -9,6 +9,7 @@ type FrameNodeProps = {
   renameRequested: boolean;
   displayZIndex: number;
   activeItem: BoardImage | null;
+  previewItems: BoardImage[];
   hiddenCount: number;
   onMovePointerDown: (event: React.PointerEvent, frameId: number) => void;
   onContextMenu: (event: React.MouseEvent, frameId: number) => void;
@@ -70,6 +71,86 @@ function FramePreview({ item }: { item: BoardImage | null }) {
       alt={item.name}
       draggable={false}
     />
+  );
+}
+
+function getSourceLabel(item: BoardImage) {
+  if (item.sourceUrl) {
+    try {
+      return new URL(item.sourceUrl).hostname;
+    } catch {
+      return item.sourceUrl;
+    }
+  }
+
+  if (item.sourceDataUrl) {
+    return "Embedded";
+  }
+
+  return item.mediaKind === "note" ? "Note" : "Local media";
+}
+
+function TuckedPreviewRow({ item }: { item: BoardImage }) {
+  const thumbnail = item.mediaKind === "note" ? (
+    <div className="frame-node-list-thumb frame-node-list-thumb-note">Note</div>
+  ) : item.mediaKind === "video" ? (
+    <video
+      className="frame-node-list-thumb"
+      src={item.src}
+      muted
+      loop
+      autoPlay
+      playsInline
+      preload="metadata"
+    />
+  ) : (
+    <img
+      className="frame-node-list-thumb"
+      src={item.isGif && item.paused && item.gifFreezeSrc ? item.gifFreezeSrc : item.src}
+      alt={item.name}
+      draggable={false}
+    />
+  );
+
+  return (
+    <div className="frame-node-list-row">
+      {thumbnail}
+      <div className="frame-node-list-copy">
+        <div className="frame-node-list-name">{item.name}</div>
+        <div className="frame-node-list-source">{getSourceLabel(item)}</div>
+      </div>
+    </div>
+  );
+}
+
+function TuckedPreviewList({
+  items,
+  hiddenCount,
+  activeItem,
+}: {
+  items: BoardImage[];
+  hiddenCount: number;
+  activeItem: BoardImage | null;
+}) {
+  if (items.length === 0) {
+    return (
+      <div className="frame-node-preview-shell">
+        <FramePreview item={activeItem} />
+      </div>
+    );
+  }
+
+  const overflowCount = Math.max(0, hiddenCount - items.length);
+
+  return (
+    <div className="frame-node-list">
+      {items.map((item) => (
+        <TuckedPreviewRow key={item.id} item={item} />
+      ))}
+      {overflowCount > 0 && (
+        <div className="frame-node-list-more">+{overflowCount} more tucked</div>
+      )}
+    </div>
   );
 }
 
@@ -150,6 +231,7 @@ function FrameNode({
   renameRequested,
   displayZIndex,
   activeItem,
+  previewItems,
   hiddenCount,
   onMovePointerDown,
   onContextMenu,
@@ -248,9 +330,11 @@ function FrameNode({
             Untuck
           </FrameActionButton>
         </header>
-        <div className="frame-node-preview-shell">
-          <FramePreview item={activeItem} />
-        </div>
+        <TuckedPreviewList
+          items={previewItems}
+          hiddenCount={hiddenCount}
+          activeItem={activeItem}
+        />
         <footer className="frame-node-footer">
           <span className="frame-node-count">{hiddenCount} tucked</span>
           <div className="frame-node-controls">

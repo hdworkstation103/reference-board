@@ -1296,6 +1296,71 @@ label.menu-item {
   background: linear-gradient(180deg, #f6f9fc 0%, #eaf0f6 100%);
 }
 
+.frame-node-list {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: linear-gradient(180deg, #f6f9fc 0%, #eef4fa 100%);
+}
+
+.frame-node-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 78px;
+  padding: 8px;
+  border: 1px solid rgba(152, 177, 205, 0.6);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.frame-node-list-thumb {
+  width: 92px;
+  height: 62px;
+  border-radius: 9px;
+  object-fit: cover;
+  background: #dbe5ef;
+  flex: 0 0 auto;
+}
+
+.frame-node-list-thumb-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #51657d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.frame-node-list-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.frame-node-list-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #244268;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.frame-node-list-source,
+.frame-node-list-more {
+  font-size: 11px;
+  color: #58718f;
+}
+
+.frame-node-list-more {
+  padding: 0 4px 2px;
+}
+
 .frame-node-preview-media,
 .frame-node-note-preview,
 .frame-node-empty {
@@ -1412,13 +1477,36 @@ label.menu-item {
   background: linear-gradient(180deg, #252a31 0%, #1e2329 100%);
 }
 
+.app-shell.dark .frame-node-list {
+  background: linear-gradient(180deg, #252a31 0%, #1f252c 100%);
+}
+
+.app-shell.dark .frame-node-list-row {
+  border-color: rgba(74, 92, 113, 0.72);
+  background: rgba(37, 37, 38, 0.78);
+}
+
 .app-shell.dark .frame-node-preview-media {
+  background: #1a1f24;
+}
+
+.app-shell.dark .frame-node-list-thumb {
   background: #1a1f24;
 }
 
 .app-shell.dark .frame-node-note-preview,
 .app-shell.dark .frame-node-empty {
   color: #afc0d3;
+}
+
+.app-shell.dark .frame-node-list-thumb-note,
+.app-shell.dark .frame-node-list-source,
+.app-shell.dark .frame-node-list-more {
+  color: #a5bbd3;
+}
+
+.app-shell.dark .frame-node-list-name {
+  color: #d8e7f7;
 }
 
 .app-shell.dark .frame-node-footer {

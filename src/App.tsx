@@ -506,10 +506,7 @@ function App() {
   };
 
   const getFrameActiveItem = (frame: BoardFrame) => {
-    const members = frame.memberIds
-      .map((memberId) => images.find((item) => item.id === memberId) ?? null)
-      .filter((item): item is BoardImage => item !== null);
-
+    const members = getFrameItems(frame);
     if (members.length === 0) {
       return null;
     }
@@ -519,6 +516,13 @@ function App() {
       Math.min(frame.activeMemberIndex ?? 0, members.length - 1),
     );
     return members[index];
+  };
+
+  const getFrameItems = (frame: BoardFrame) => {
+    const members = frame.memberIds
+      .map((memberId) => images.find((item) => item.id === memberId) ?? null)
+      .filter((item): item is BoardImage => item !== null);
+    return members;
   };
 
   const toggleFrameCollapsed = (frameId: number) => {
@@ -3694,11 +3698,12 @@ function App() {
           {frameViews.map(({ frame, bounds }) => (
             (() => {
               const activeItem = getFrameActiveItem(frame);
-              const collapsedWidth = activeItem?.width ?? Math.max(240, Math.min(bounds.width, 420));
-              const collapsedHeight =
-                activeItem
-                  ? getItemHeight(activeItem)
-                  : Math.max(220, bounds.height);
+              const previewItems = getFrameItems(frame).slice(0, 3);
+              const collapsedWidth = Math.max(320, Math.min(bounds.width, 400));
+              const collapsedHeight = Math.max(
+                168,
+                60 + previewItems.length * 88 + (frame.memberIds.length > previewItems.length ? 34 : 0) + 52,
+              );
               const displayBounds = frame.collapsed
                 ? {
                     left: bounds.left,
@@ -3717,6 +3722,7 @@ function App() {
                   renameRequested={renamingFrameId === frame.id}
                   displayZIndex={Math.min(...frame.memberIds.map((id) => images.find((item) => item.id === id)?.z ?? frame.z)) - 1}
                   activeItem={activeItem}
+                  previewItems={previewItems}
                   hiddenCount={frame.memberIds.length}
                   onMovePointerDown={startFrameMove}
                   onContextMenu={onFrameContextMenu}
