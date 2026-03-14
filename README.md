@@ -4,6 +4,8 @@ Reference Board is a local-first infinite canvas for collecting and arranging vi
 
 It supports images, video, markdown notes, grouped frames, media stacks, transform controls, shader experiments, dark mode, and JSON canvas snapshots. The app is built with React, TypeScript, and Vite.
 
+![Reference Board example](./img/example.png)
+
 ## Features
 
 - Drop images and videos directly onto the board.
