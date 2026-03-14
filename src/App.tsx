@@ -14,6 +14,7 @@ import {
   BoardNode,
   BoardViewport,
   buildSnapshot,
+  clearPersistedBoardSnapshot,
   ContextMenu,
   createMediaItemFromFile,
   extractDropSourceUrls,
@@ -28,9 +29,11 @@ import {
   hasSameMembers,
   IMAGE_WIDTH,
   InspectorPanel,
+  loadPersistedBoardSnapshot,
   MIN_IMAGE_WIDTH,
   NOTE_DEFAULT_ASPECT,
   parseSnapshot,
+  savePersistedBoardSnapshot,
   SelectionMarquee,
   ShaderSandbox,
   START_X,
@@ -57,6 +60,7 @@ import type {
   MoveModeState,
   NodeMediaItem,
   PanState,
+  ParsedSnapshot,
   PreparedMedia,
   ScaleModeState,
 } from "./features/board";
@@ -97,11 +101,14 @@ const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
   pivotY: 50,
 };
 
+const BOARD_PERSISTENCE_DEBOUNCE_MS = 150;
+
 function App() {
   const [images, setImages] = useState<BoardImage[]>([]);
   const [darkMode, setDarkMode] = useState(
     () => window.localStorage.getItem("reference-board-theme") === "dark",
   );
+  const [persistenceHydrated, setPersistenceHydrated] = useState(false);
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
   const [scaleMode, setScaleMode] = useState<ScaleModeState | null>(null);
   const [moveMode, setMoveMode] = useState<MoveModeState | null>(null);
@@ -447,6 +454,24 @@ function App() {
     setContextMenu(menu);
   };
 
+  const resetTransientUiState = () => {
+    setSelectedFrameId(null);
+    setSelectedId(null);
+    setSelectedIds([]);
+    setSeekPanelId(null);
+    setScaleMode(null);
+    setMoveMode(null);
+    setInteraction(null);
+    setGroupOverlay(null);
+    setPan(null);
+    setMarquee(null);
+    setVideoTimelines({});
+    setGifFrameCounts({});
+    setGifSeekFrames({});
+    setBrokenMediaIds({});
+    setContextMenu(null);
+  };
+
   const cloneDocument = (document: BoardDocument): BoardDocument => ({
     images: document.images.map((image) => ({
       ...image,
@@ -471,6 +496,34 @@ function App() {
     setMediaTransforms(document.mediaTransforms);
     setDarkMode(document.darkMode);
     documentRef.current = cloneDocument(document);
+  };
+
+  const restoreSnapshotState = (
+    snapshotState: ParsedSnapshot,
+    options?: {
+      historyLabel?: string;
+      recordHistory?: boolean;
+    },
+  ) => {
+    const before = options?.recordHistory
+      ? cloneDocument(documentRef.current)
+      : null;
+    const after = {
+      images: snapshotState.loadedImages,
+      frames: snapshotState.loadedFrames,
+      mediaTransforms: snapshotState.loadedMediaTransforms,
+      darkMode: snapshotState.darkMode,
+    };
+
+    applyDocument(after);
+    if (before) {
+      recordHistoryEntry(options?.historyLabel ?? "Load Canvas", before, after);
+    }
+
+    resetTransientUiState();
+    nextIdRef.current = snapshotState.nextId;
+    nextZRef.current = snapshotState.nextZ;
+    nextFrameIdRef.current = snapshotState.nextFrameId;
   };
 
   const recordHistoryEntry = (
@@ -1171,6 +1224,119 @@ function App() {
       darkMode ? "dark" : "light",
     );
   }, [darkMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const restorePersistedSnapshot = (snapshotState: ParsedSnapshot) => {
+      const restoredDocument = {
+        images: snapshotState.loadedImages,
+        frames: snapshotState.loadedFrames,
+        mediaTransforms: snapshotState.loadedMediaTransforms,
+        darkMode: snapshotState.darkMode,
+      };
+
+      setImages(restoredDocument.images);
+      setFrames(restoredDocument.frames);
+      setMediaTransforms(restoredDocument.mediaTransforms);
+      setDarkMode(restoredDocument.darkMode);
+      documentRef.current = {
+        images: restoredDocument.images.map((image) => ({
+          ...image,
+          mediaItems: image.mediaItems?.map((mediaItem) => ({ ...mediaItem })),
+        })),
+        frames: restoredDocument.frames.map((frame) => ({
+          ...frame,
+          memberIds: [...frame.memberIds],
+        })),
+        mediaTransforms: Object.fromEntries(
+          Object.entries(restoredDocument.mediaTransforms).map(([id, settings]) => [
+            Number(id),
+            { ...settings },
+          ]),
+        ),
+        darkMode: restoredDocument.darkMode,
+      };
+
+      setSelectedFrameId(null);
+      setSelectedId(null);
+      setSelectedIds([]);
+      setSeekPanelId(null);
+      setScaleMode(null);
+      setMoveMode(null);
+      setInteraction(null);
+      setGroupOverlay(null);
+      setPan(null);
+      setMarquee(null);
+      setVideoTimelines({});
+      setGifFrameCounts({});
+      setGifSeekFrames({});
+      setBrokenMediaIds({});
+      setContextMenu(null);
+
+      nextIdRef.current = snapshotState.nextId;
+      nextZRef.current = snapshotState.nextZ;
+      nextFrameIdRef.current = snapshotState.nextFrameId;
+    };
+
+    const restorePersistedBoard = async () => {
+      try {
+        const persistedSnapshot = await loadPersistedBoardSnapshot();
+        if (!persistedSnapshot || cancelled) {
+          return;
+        }
+
+        restorePersistedSnapshot(parseSnapshot(persistedSnapshot));
+      } catch (error) {
+        console.warn("Unable to restore persisted board state", error);
+
+        try {
+          await clearPersistedBoardSnapshot();
+        } catch (clearError) {
+          console.warn("Unable to clear persisted board state", clearError);
+        }
+      } finally {
+        if (!cancelled) {
+          setPersistenceHydrated(true);
+        }
+      }
+    };
+
+    void restorePersistedBoard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!persistenceHydrated) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const snapshot = buildSnapshot(
+        images,
+        activeFrames,
+        activeMediaTransforms,
+        darkMode,
+      );
+
+      void savePersistedBoardSnapshot(JSON.stringify(snapshot)).catch((error) => {
+        console.warn("Unable to persist board state", error);
+      });
+    }, BOARD_PERSISTENCE_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    activeFrames,
+    activeMediaTransforms,
+    darkMode,
+    images,
+    persistenceHydrated,
+  ]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2378,36 +2544,10 @@ function App() {
     }
 
     try {
-      const snapshotState = parseSnapshot(await file.text());
-      const before = cloneDocument(documentRef.current);
-      const after = {
-        images: snapshotState.loadedImages,
-        frames: snapshotState.loadedFrames,
-        mediaTransforms: snapshotState.loadedMediaTransforms,
-        darkMode: snapshotState.darkMode,
-      };
-
-      applyDocument(after);
-      recordHistoryEntry("Load Canvas", before, after);
-      setSelectedFrameId(null);
-      setSelectedId(null);
-      setSelectedIds([]);
-      setSeekPanelId(null);
-      setScaleMode(null);
-      setMoveMode(null);
-      setInteraction(null);
-      setGroupOverlay(null);
-      setPan(null);
-      setMarquee(null);
-      setVideoTimelines({});
-      setGifFrameCounts({});
-      setGifSeekFrames({});
-      setBrokenMediaIds({});
-      setContextMenu(null);
-
-      nextIdRef.current = snapshotState.nextId;
-      nextZRef.current = snapshotState.nextZ;
-      nextFrameIdRef.current = snapshotState.nextFrameId;
+      restoreSnapshotState(parseSnapshot(await file.text()), {
+        historyLabel: "Load Canvas",
+        recordHistory: true,
+      });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to load snapshot";
@@ -3439,17 +3579,8 @@ function App() {
   const clearBoard = () => {
     setImages([]);
     setFrames([]);
-    setSelectedFrameId(null);
-    setSelectedId(null);
-    setSelectedIds([]);
-    setInteraction(null);
-    setGroupOverlay(null);
-    setSeekPanelId(null);
-    setScaleMode(null);
-    setMoveMode(null);
-    setBrokenMediaIds({});
     setMediaTransforms({});
-    setContextMenu(null);
+    resetTransientUiState();
   };
 
   const centerView = () => {
