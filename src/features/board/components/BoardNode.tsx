@@ -1,6 +1,6 @@
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { CARD_BORDER_HEIGHT, CAPTION_HEIGHT, WORLD_ORIGIN } from '../constants'
-import type { BoardImage, MediaTimeline } from '../types'
+import type { BoardImage, MediaTimeline } from '../model'
 import MediaBody from './MediaBody'
 import NodeFooter from './NodeFooter'
 import NodeSelectionFx from './NodeSelectionFx'

@@ -1,5 +1,5 @@
 import { WORLD_ORIGIN } from '../constants'
-import type { MarqueeState } from '../types'
+import type { MarqueeState } from '../model'
 
 type SelectionMarqueeProps = {
   marquee: MarqueeState

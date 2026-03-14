@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ContextMenuSection, ContextMenuState } from '../types'
+import type { ContextMenuSection, ContextMenuState } from '../model'
 
 type ContextMenuProps = {
   menu: ContextMenuState | null

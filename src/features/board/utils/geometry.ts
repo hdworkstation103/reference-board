@@ -1,5 +1,5 @@
-import { CARD_BORDER_HEIGHT, CAPTION_HEIGHT } from "./constants";
-import type { BoardImage, GroupBounds, ItemRect } from "./types";
+import { CARD_BORDER_HEIGHT, CAPTION_HEIGHT } from "../constants";
+import type { BoardImage, GroupBounds, ItemRect } from "../model";
 
 export const FRAME_PADDING_X = 28;
 export const FRAME_PADDING_TOP = 40;

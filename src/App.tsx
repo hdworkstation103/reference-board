@@ -8,40 +8,35 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { CSSProperties } from "react";
-import AppToolbar from "./features/board/components/AppToolbar";
-import BoardNode from "./features/board/components/BoardNode";
-import BoardViewport from "./features/board/components/BoardViewport";
-import ContextMenu from "./features/board/components/ContextMenu";
-import FrameNode from "./features/board/components/FrameNode";
-import GroupOverlays from "./features/board/components/GroupOverlays";
-import InspectorPanel from "./features/board/components/InspectorPanel";
-import SelectionMarquee from "./features/board/components/SelectionMarquee";
 import {
-  IMAGE_WIDTH,
-  MIN_IMAGE_WIDTH,
-  NOTE_DEFAULT_ASPECT,
-  START_X,
-  START_Y,
-  WORLD_ORIGIN,
-  WORLD_SIZE,
-} from "./features/board/constants";
-import {
+  AppToolbar,
+  applyActiveMediaFromItems,
+  BoardNode,
+  BoardViewport,
+  buildSnapshot,
+  ContextMenu,
+  createMediaItemFromFile,
+  extractDropSourceUrls,
+  fileToDataUrl,
+  FrameNode,
   getFrameBounds,
   getGroupBounds,
   getItemHeight,
   getItemRect,
-  hasSameMembers,
-} from "./features/board/geometry";
-import {
-  createMediaItemFromFile,
-  extractDropSourceUrls,
-  fileToDataUrl,
-} from "./features/board/media/io";
-import {
-  applyActiveMediaFromItems,
   getMediaItemsForNode,
-} from "./features/board/media/nodeMedia";
-import { buildSnapshot, parseSnapshot } from "./features/board/snapshot";
+  GroupOverlays,
+  hasSameMembers,
+  IMAGE_WIDTH,
+  InspectorPanel,
+  MIN_IMAGE_WIDTH,
+  NOTE_DEFAULT_ASPECT,
+  parseSnapshot,
+  SelectionMarquee,
+  START_X,
+  START_Y,
+  WORLD_ORIGIN,
+  WORLD_SIZE,
+} from "./features/board";
 import "./features/board/styles/board.css";
 import type {
   BoardFrame,
@@ -63,7 +58,7 @@ import type {
   PanState,
   PreparedMedia,
   ScaleModeState,
-} from "./features/board/types";
+} from "./features/board";
 
 type GifFrameLike = CanvasImageSource & {
   close?: () => void;

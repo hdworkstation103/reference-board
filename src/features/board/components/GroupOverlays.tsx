@@ -1,5 +1,5 @@
 import { WORLD_ORIGIN } from '../constants'
-import type { GroupOverlayState, PersistentGroupView } from '../types'
+import type { GroupOverlayState, PersistentGroupView } from '../model'
 
 type GroupOverlaysProps = {
   persistentGroups: PersistentGroupView[]

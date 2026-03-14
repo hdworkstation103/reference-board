@@ -1,4 +1,4 @@
-import type { BoardImage, MediaTimeline } from '../types'
+import type { BoardImage, MediaTimeline } from '../model'
 
 type SeekPanelProps = {
   image: BoardImage

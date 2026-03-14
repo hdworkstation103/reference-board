@@ -1,4 +1,4 @@
-import type { BoardImage, NodeMediaItem } from '../types'
+import type { BoardImage, NodeMediaItem } from "../model";
 
 export const getActiveMediaItem = (item: BoardImage) => {
   const mediaItems = item.mediaItems

@@ -1,4 +1,4 @@
-import type { BoardImage } from '../types'
+import type { BoardImage } from '../model'
 
 type NodeFooterProps = {
   image: BoardImage

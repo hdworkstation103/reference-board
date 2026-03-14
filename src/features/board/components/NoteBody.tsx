@@ -1,4 +1,4 @@
-import { renderMarkdownToHtml } from '../markdown'
+import { renderMarkdownToHtml } from '../utils'
 
 type NoteBodyProps = {
   noteMarkdown: string

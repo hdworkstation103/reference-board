@@ -1,4 +1,4 @@
-import type { NodeMediaItem } from '../types'
+import type { NodeMediaItem } from "../model";
 
 export const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {

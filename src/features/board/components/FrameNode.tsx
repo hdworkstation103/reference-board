@@ -1,39 +1,55 @@
-import { useEffect, useRef, useState } from 'react'
-import { WORLD_ORIGIN } from '../constants'
-import type { BoardFrame, BoardImage, GroupBounds } from '../types'
+import { useEffect, useRef, useState } from "react";
+import { WORLD_ORIGIN } from "../constants";
+import type { BoardFrame, BoardImage, GroupBounds } from "../model";
 
 type FrameNodeProps = {
-  frame: BoardFrame
-  bounds: GroupBounds
-  selected: boolean
-  renameRequested: boolean
-  displayZIndex: number
-  activeItem: BoardImage | null
-  hiddenCount: number
-  onMovePointerDown: (event: React.PointerEvent, frameId: number) => void
-  onContextMenu: (event: React.MouseEvent, frameId: number) => void
-  onSelect: (frameId: number) => void
-  onRename: (frameId: number, name: string) => void
-  onRenameStateChange: (frameId: number, active: boolean) => void
-  onToggleCollapsed: (frameId: number) => void
-  onToggleSlideshow: (frameId: number) => void
-  onStepSlideshow: (frameId: number, direction: 1 | -1) => void
-}
+  frame: BoardFrame;
+  bounds: GroupBounds;
+  selected: boolean;
+  renameRequested: boolean;
+  displayZIndex: number;
+  activeItem: BoardImage | null;
+  hiddenCount: number;
+  onMovePointerDown: (event: React.PointerEvent, frameId: number) => void;
+  onContextMenu: (event: React.MouseEvent, frameId: number) => void;
+  onSelect: (frameId: number) => void;
+  onRename: (frameId: number, name: string) => void;
+  onRenameStateChange: (frameId: number, active: boolean) => void;
+  onToggleCollapsed: (frameId: number) => void;
+  onToggleSlideshow: (frameId: number) => void;
+  onStepSlideshow: (frameId: number, direction: 1 | -1) => void;
+};
+
+type FrameTitleProps = {
+  frame: BoardFrame;
+  isRenaming: boolean;
+  draftName: string;
+  renameInputRef: React.RefObject<HTMLInputElement | null>;
+  onDraftNameChange: (value: string) => void;
+  onBeginRename: () => void;
+  onCommitRename: () => void;
+  onCancelRename: () => void;
+};
+
+type FrameActionButtonProps = {
+  children: React.ReactNode;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+};
 
 function FramePreview({ item }: { item: BoardImage | null }) {
   if (!item) {
-    return <div className="frame-node-empty">Empty frame</div>
+    return <div className="frame-node-empty">Empty frame</div>;
   }
 
-  if (item.mediaKind === 'note') {
+  if (item.mediaKind === "note") {
     return (
       <div className="frame-node-note-preview">
-        {(item.noteMarkdown ?? 'Note').slice(0, 160)}
+        {(item.noteMarkdown ?? "Note").slice(0, 160)}
       </div>
-    )
+    );
   }
 
-  if (item.mediaKind === 'video') {
+  if (item.mediaKind === "video") {
     return (
       <video
         className="frame-node-preview-media"
@@ -44,10 +60,87 @@ function FramePreview({ item }: { item: BoardImage | null }) {
         playsInline
         preload="metadata"
       />
-    )
+    );
   }
 
-  return <img className="frame-node-preview-media" src={item.src} alt={item.name} draggable={false} />
+  return (
+    <img
+      className="frame-node-preview-media"
+      src={item.src}
+      alt={item.name}
+      draggable={false}
+    />
+  );
+}
+
+function FrameActionButton({ children, onClick }: FrameActionButtonProps) {
+  return (
+    <button
+      type="button"
+      className="frame-node-chip"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FrameTitle({
+  frame,
+  isRenaming,
+  draftName,
+  renameInputRef,
+  onDraftNameChange,
+  onBeginRename,
+  onCommitRename,
+  onCancelRename,
+}: FrameTitleProps) {
+  if (isRenaming) {
+    return (
+      <input
+        ref={renameInputRef}
+        className="frame-node-title-input"
+        value={draftName}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.stopPropagation();
+        }}
+        onChange={(event) => {
+          onDraftNameChange(event.currentTarget.value);
+        }}
+        onBlur={onCommitRename}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onCommitRename();
+          }
+
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onCancelRename();
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <span
+      className="frame-node-title"
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        onBeginRename();
+      }}
+    >
+      {frame.name}
+    </span>
+  );
 }
 
 function FrameNode({
@@ -67,120 +160,93 @@ function FrameNode({
   onToggleSlideshow,
   onStepSlideshow,
 }: FrameNodeProps) {
-  const [isRenaming, setIsRenaming] = useState(false)
-  const [draftName, setDraftName] = useState(frame.name)
-  const renameInputRef = useRef<HTMLInputElement | null>(null)
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [draftName, setDraftName] = useState(frame.name);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!isRenaming) {
-      setDraftName(frame.name)
+      setDraftName(frame.name);
     }
-  }, [frame.name, isRenaming])
+  }, [frame.name, isRenaming]);
 
   useEffect(() => {
     if (isRenaming) {
-      renameInputRef.current?.focus()
-      renameInputRef.current?.select()
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
     }
-  }, [isRenaming])
+  }, [isRenaming]);
 
   useEffect(() => {
-    onRenameStateChange(frame.id, isRenaming)
-  }, [frame.id, isRenaming, onRenameStateChange])
+    onRenameStateChange(frame.id, isRenaming);
+  }, [frame.id, isRenaming, onRenameStateChange]);
 
   useEffect(() => {
     if (renameRequested) {
-      setIsRenaming(true)
+      setIsRenaming(true);
     }
-  }, [renameRequested])
+  }, [renameRequested]);
 
   const commitRename = () => {
-    const nextName = draftName.trim()
+    const nextName = draftName.trim();
     if (nextName.length > 0 && nextName !== frame.name) {
-      onRename(frame.id, nextName)
+      onRename(frame.id, nextName);
     }
-    setIsRenaming(false)
-  }
+    setIsRenaming(false);
+  };
 
   const cancelRename = () => {
-    setDraftName(frame.name)
-    setIsRenaming(false)
-  }
+    setDraftName(frame.name);
+    setIsRenaming(false);
+  };
 
-  const titleContent = isRenaming ? (
-    <input
-      ref={renameInputRef}
-      className="frame-node-title-input"
-      value={draftName}
-      onPointerDown={(event) => {
-        event.stopPropagation()
-      }}
-      onClick={(event) => {
-        event.stopPropagation()
-      }}
-      onChange={(event) => {
-        setDraftName(event.currentTarget.value)
-      }}
-      onBlur={commitRename}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault()
-          commitRename()
-        }
+  const sectionStyle = {
+    left: `${bounds.left + WORLD_ORIGIN}px`,
+    top: `${bounds.top + WORLD_ORIGIN}px`,
+    width: `${bounds.width}px`,
+    height: `${bounds.height}px`,
+    zIndex: displayZIndex,
+  };
 
-        if (event.key === 'Escape') {
-          event.preventDefault()
-          cancelRename()
-        }
-      }}
+  const title = (
+    <FrameTitle
+      frame={frame}
+      isRenaming={isRenaming}
+      draftName={draftName}
+      renameInputRef={renameInputRef}
+      onDraftNameChange={setDraftName}
+      onBeginRename={() => setIsRenaming(true)}
+      onCommitRename={commitRename}
+      onCancelRename={cancelRename}
     />
-  ) : (
-    <span
-      className="frame-node-title"
-      onPointerDown={(event) => {
-        event.stopPropagation()
-      }}
-      onDoubleClick={(event) => {
-        event.stopPropagation()
-        setIsRenaming(true)
-      }}
-    >
-      {frame.name}
-    </span>
-  )
+  );
 
   if (frame.collapsed) {
     return (
       <section
-        className={`frame-node frame-node-collapsed ${selected ? 'is-selected' : ''}`}
-        style={{
-          left: `${bounds.left + WORLD_ORIGIN}px`,
-          top: `${bounds.top + WORLD_ORIGIN}px`,
-          width: `${bounds.width}px`,
-          height: `${bounds.height}px`,
-          zIndex: displayZIndex,
-        }}
+        className={`frame-node frame-node-collapsed ${selected ? "is-selected" : ""}`}
+        style={sectionStyle}
         onPointerDown={(event) => {
-          onSelect(frame.id)
+          onSelect(frame.id);
           if (event.button === 0) {
-            onMovePointerDown(event, frame.id)
+            onMovePointerDown(event, frame.id);
           }
         }}
         onContextMenu={(event) => onContextMenu(event, frame.id)}
       >
-        <header className="frame-node-toolbar" onPointerDown={(event) => onMovePointerDown(event, frame.id)}>
-          {titleContent}
-          <button
-            type="button"
-            className="frame-node-chip"
-            onPointerDown={(event) => event.stopPropagation()}
+        <header
+          className="frame-node-toolbar"
+          onPointerDown={(event) => onMovePointerDown(event, frame.id)}
+        >
+          {title}
+          <FrameActionButton
             onClick={(event) => {
-              event.stopPropagation()
-              onToggleCollapsed(frame.id)
+              event.stopPropagation();
+              onToggleCollapsed(frame.id);
             }}
           >
             Untuck
-          </button>
+          </FrameActionButton>
         </header>
         <div className="frame-node-preview-shell">
           <FramePreview item={activeItem} />
@@ -188,77 +254,62 @@ function FrameNode({
         <footer className="frame-node-footer">
           <span className="frame-node-count">{hiddenCount} tucked</span>
           <div className="frame-node-controls">
-            <button
-              type="button"
-              className="frame-node-chip"
-              onPointerDown={(event) => event.stopPropagation()}
+            <FrameActionButton
               onClick={(event) => {
-                event.stopPropagation()
-                onStepSlideshow(frame.id, -1)
+                event.stopPropagation();
+                onStepSlideshow(frame.id, -1);
               }}
             >
               Prev
-            </button>
-            <button
-              type="button"
-              className="frame-node-chip"
-              onPointerDown={(event) => event.stopPropagation()}
+            </FrameActionButton>
+            <FrameActionButton
               onClick={(event) => {
-                event.stopPropagation()
-                onToggleSlideshow(frame.id)
+                event.stopPropagation();
+                onToggleSlideshow(frame.id);
               }}
             >
-              {frame.slideshowPlaying ? 'Pause' : 'Play'}
-            </button>
-            <button
-              type="button"
-              className="frame-node-chip"
-              onPointerDown={(event) => event.stopPropagation()}
+              {frame.slideshowPlaying ? "Pause" : "Play"}
+            </FrameActionButton>
+            <FrameActionButton
               onClick={(event) => {
-                event.stopPropagation()
-                onStepSlideshow(frame.id, 1)
+                event.stopPropagation();
+                onStepSlideshow(frame.id, 1);
               }}
             >
               Next
-            </button>
+            </FrameActionButton>
           </div>
         </footer>
       </section>
-    )
+    );
   }
 
   return (
     <section
-      className={`frame-node frame-node-expanded ${selected ? 'is-selected' : ''}`}
-      style={{
-        left: `${bounds.left + WORLD_ORIGIN}px`,
-        top: `${bounds.top + WORLD_ORIGIN}px`,
-        width: `${bounds.width}px`,
-        height: `${bounds.height}px`,
-        zIndex: displayZIndex,
-      }}
+      className={`frame-node frame-node-expanded ${selected ? "is-selected" : ""}`}
+      style={sectionStyle}
       onPointerDown={() => onSelect(frame.id)}
       onContextMenu={(event) => onContextMenu(event, frame.id)}
     >
-      <header className="frame-node-toolbar" onPointerDown={(event) => onMovePointerDown(event, frame.id)}>
-        {titleContent}
+      <header
+        className="frame-node-toolbar"
+        onPointerDown={(event) => onMovePointerDown(event, frame.id)}
+      >
+        {title}
         <div className="frame-node-controls">
           <span className="frame-node-count">{frame.memberIds.length} nodes</span>
-          <button
-            type="button"
-            className="frame-node-chip"
-            onPointerDown={(event) => event.stopPropagation()}
+          <FrameActionButton
             onClick={(event) => {
-              event.stopPropagation()
-              onToggleCollapsed(frame.id)
+              event.stopPropagation();
+              onToggleCollapsed(frame.id);
             }}
           >
             Tuck
-          </button>
+          </FrameActionButton>
         </div>
       </header>
     </section>
-  )
+  );
 }
 
-export default FrameNode
+export default FrameNode;
