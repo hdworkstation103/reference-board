@@ -19,6 +19,153 @@
   grid-template-columns: minmax(0, 1fr) 8px var(--inspector-width, 300px);
 }
 
+.shader-sandbox-page {
+  flex: 1;
+  min-height: 0;
+  padding: 20px;
+}
+
+.shader-sandbox-layout {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(360px, 1.15fr) minmax(320px, 0.85fr);
+  gap: 18px;
+}
+
+.shader-sandbox-panel,
+.shader-sandbox-preview-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(150, 170, 190, 0.42);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 16px 40px rgba(21, 31, 44, 0.08);
+  backdrop-filter: blur(10px);
+}
+
+.shader-sandbox-header,
+.shader-sandbox-preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+}
+
+.shader-sandbox-title,
+.shader-sandbox-preview-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #1f2d3a;
+}
+
+.shader-sandbox-subtitle,
+.shader-sandbox-preview-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #5a6f85;
+}
+
+.shader-sandbox-reset {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #244268;
+  padding: 8px 10px;
+  border: 1px solid #c7d3e0;
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.shader-sandbox-editor-label {
+  padding: 0 18px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #58718f;
+}
+
+.shader-sandbox-editor {
+  flex: 1;
+  min-height: 280px;
+  margin: 0 18px;
+  padding: 16px;
+  border: 1px solid #c9d4df;
+  border-radius: 14px;
+  background: #fbfdff;
+  color: #172331;
+  font: 12px/1.5 "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  resize: none;
+  outline: none;
+}
+
+.shader-sandbox-status {
+  margin: 16px 18px 18px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+}
+
+.shader-sandbox-status.is-valid {
+  border-color: rgba(78, 176, 118, 0.35);
+  background: rgba(92, 191, 132, 0.08);
+}
+
+.shader-sandbox-status.is-invalid {
+  border-color: rgba(201, 92, 92, 0.35);
+  background: rgba(201, 92, 92, 0.08);
+}
+
+.shader-sandbox-status-label {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.shader-sandbox-log {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 12px/1.5 "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  color: #44576b;
+}
+
+.shader-sandbox-preview-frame {
+  flex: 1;
+  min-height: 0;
+  padding: 0 18px 18px;
+}
+
+.shader-sandbox-preview-media {
+  position: relative;
+  height: 100%;
+  min-height: 360px;
+  overflow: hidden;
+  border-radius: 18px;
+  background:
+    linear-gradient(45deg, rgba(31, 45, 58, 0.06) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(31, 45, 58, 0.06) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(31, 45, 58, 0.06) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(31, 45, 58, 0.06) 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+}
+
+.shader-sandbox-preview-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.shader-sandbox-preview-shader {
+  border-radius: 18px;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -544,6 +691,57 @@ label.menu-item {
   color: #e38d95;
 }
 
+.app-shell.dark .shader-sandbox-panel,
+.app-shell.dark .shader-sandbox-preview-panel {
+  border-color: rgba(74, 92, 113, 0.7);
+  background: rgba(31, 37, 44, 0.8);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+}
+
+.app-shell.dark .shader-sandbox-title,
+.app-shell.dark .shader-sandbox-preview-title {
+  color: #d8e7f7;
+}
+
+.app-shell.dark .shader-sandbox-subtitle,
+.app-shell.dark .shader-sandbox-preview-note,
+.app-shell.dark .shader-sandbox-editor-label,
+.app-shell.dark .shader-sandbox-log {
+  color: #a5bbd3;
+}
+
+.app-shell.dark .shader-sandbox-reset {
+  border-color: #4a5c71;
+  background: #252526;
+  color: #d8e7f7;
+}
+
+.app-shell.dark .shader-sandbox-editor {
+  border-color: #4a5c71;
+  background: #171b20;
+  color: #d8e7f7;
+}
+
+.app-shell.dark .shader-sandbox-status.is-valid {
+  border-color: rgba(78, 176, 118, 0.4);
+  background: rgba(78, 176, 118, 0.12);
+}
+
+.app-shell.dark .shader-sandbox-status.is-invalid {
+  border-color: rgba(201, 92, 92, 0.4);
+  background: rgba(201, 92, 92, 0.12);
+}
+
+.app-shell.dark .shader-sandbox-preview-media {
+  background:
+    linear-gradient(45deg, rgba(216, 231, 247, 0.05) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(216, 231, 247, 0.05) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(216, 231, 247, 0.05) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(216, 231, 247, 0.05) 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+}
+
 .app-shell.dark .menu-item.danger:hover {
   background: #412b2d;
   border-color: #6a3f43;
@@ -733,6 +931,9 @@ label.menu-item {
   top: 0;
   right: 0;
   bottom: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
   border-radius: var(--node-border-radius);
   overflow: hidden;
   pointer-events: none;
@@ -816,6 +1017,27 @@ label.menu-item {
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.media-shine-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+  border-top-left-radius: 7px;
+  border-top-right-radius: 7px;
+  mix-blend-mode: screen;
+  opacity: 0.42;
+}
+
+.media-shine-layer canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
 }
 
 .media-stack-node .media-content {
@@ -1059,6 +1281,10 @@ label.menu-item {
 
 .app-shell.dark .media-frame {
   background: #1a1a1c;
+}
+
+.app-shell.dark .media-shine-layer {
+  opacity: 0.5;
 }
 
 .app-shell.dark .stack-count {
@@ -1593,6 +1819,14 @@ label.menu-item {
   .app-content {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .shader-sandbox-page {
+    padding: 14px;
+  }
+
+  .shader-sandbox-layout {
+    grid-template-columns: 1fr;
   }
 
   .inspector-resize-handle {

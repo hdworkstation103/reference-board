@@ -1,4 +1,5 @@
 import type { BoardImage } from '../model'
+import MediaShineFx from './MediaShineFx'
 
 type MediaBodyProps = {
   image: BoardImage
@@ -65,6 +66,7 @@ function MediaBody({
           onTimeUpdate={onVideoTimeUpdate}
           onError={onVideoError}
         />
+        <MediaShineFx />
       </div>
     )
   }
@@ -86,6 +88,7 @@ function MediaBody({
         onLoad={onImageLoad}
         onError={onImageError}
       />
+      <MediaShineFx />
     </div>
   )
 }

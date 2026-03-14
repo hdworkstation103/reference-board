@@ -1,5 +1,5 @@
-import { Shader } from 'react-shaders'
 import { SELECTION_SHADER_FS } from '../constants'
+import ShaderSurface from './ShaderSurface'
 
 type NodeSelectionFxProps = {
   enabled: boolean
@@ -8,24 +8,25 @@ type NodeSelectionFxProps = {
 
 function NodeSelectionFx({ enabled, onDisable }: NodeSelectionFxProps) {
   return (
-    <div className="shader-selection-layer node-selection-fx" aria-hidden="true">
-      {enabled && (
-        <Shader
-          fs={SELECTION_SHADER_FS}
-          clearColor={[0, 0, 0, 0]}
-          style={{ width: '100%', height: '100%' } as never}
-          onError={(error) => {
-            console.warn('Selection shader disabled:', error)
+    enabled ? (
+      <ShaderSurface
+        fs={SELECTION_SHADER_FS}
+        className="shader-selection-layer node-selection-fx"
+        onStatusChange={(status) => {
+          if (status.validationError) {
+            console.warn("Selection shader disabled:", status.validationError)
             onDisable()
-          }}
-          onWarning={(warning) => {
-            if (warning) {
-              console.warn('Selection shader warning:', warning)
-            }
-          }}
-        />
-      )}
-    </div>
+          }
+          if (status.runtimeError) {
+            console.warn("Selection shader disabled:", status.runtimeError)
+            onDisable()
+          }
+          if (status.runtimeWarning) {
+            console.warn("Selection shader warning:", status.runtimeWarning)
+          }
+        }}
+      />
+    ) : null
   )
 }
 

@@ -4,6 +4,7 @@ type AppToolbarProps = {
   darkMode: boolean
   imageCount: number
   enableSelectionShader: boolean
+  shaderSandboxOpen: boolean
   onAddFiles: (files: FileList | null) => void
   onSaveVersion: () => void
   onAddNote: () => void
@@ -11,12 +12,14 @@ type AppToolbarProps = {
   onCenterView: () => void
   onClearBoard: () => void
   onToggleDarkMode: () => void
+  onToggleShaderSandbox: () => void
 }
 
 function AppToolbar({
   darkMode,
   imageCount,
   enableSelectionShader,
+  shaderSandboxOpen,
   onAddFiles,
   onSaveVersion,
   onAddNote,
@@ -24,6 +27,7 @@ function AppToolbar({
   onCenterView,
   onClearBoard,
   onToggleDarkMode,
+  onToggleShaderSandbox,
 }: AppToolbarProps) {
   const [openMenu, setOpenMenu] = useState<'file' | 'view' | null>(null)
   const navRef = useRef<HTMLElement | null>(null)
@@ -152,6 +156,12 @@ function AppToolbar({
               onToggleDarkMode()
             }}>
               {darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            </button>
+            <button type="button" className="menu-item" onClick={() => {
+              setOpenMenu(null)
+              onToggleShaderSandbox()
+            }}>
+              {shaderSandboxOpen ? 'Close Shader Sandbox' : 'Open Shader Sandbox'}
             </button>
             </div>
           )}

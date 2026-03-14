@@ -17,8 +17,6 @@ type FrameNodeProps = {
   onRename: (frameId: number, name: string) => void;
   onRenameStateChange: (frameId: number, active: boolean) => void;
   onToggleCollapsed: (frameId: number) => void;
-  onToggleSlideshow: (frameId: number) => void;
-  onStepSlideshow: (frameId: number, direction: 1 | -1) => void;
 };
 
 type FrameTitleProps = {
@@ -239,8 +237,6 @@ function FrameNode({
   onRename,
   onRenameStateChange,
   onToggleCollapsed,
-  onToggleSlideshow,
-  onStepSlideshow,
 }: FrameNodeProps) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(frame.name);
@@ -337,32 +333,7 @@ function FrameNode({
         />
         <footer className="frame-node-footer">
           <span className="frame-node-count">{hiddenCount} tucked</span>
-          <div className="frame-node-controls">
-            <FrameActionButton
-              onClick={(event) => {
-                event.stopPropagation();
-                onStepSlideshow(frame.id, -1);
-              }}
-            >
-              Prev
-            </FrameActionButton>
-            <FrameActionButton
-              onClick={(event) => {
-                event.stopPropagation();
-                onToggleSlideshow(frame.id);
-              }}
-            >
-              {frame.slideshowPlaying ? "Pause" : "Play"}
-            </FrameActionButton>
-            <FrameActionButton
-              onClick={(event) => {
-                event.stopPropagation();
-                onStepSlideshow(frame.id, 1);
-              }}
-            >
-              Next
-            </FrameActionButton>
-          </div>
+          <span className="frame-node-count">Tucked view</span>
         </footer>
       </section>
     );

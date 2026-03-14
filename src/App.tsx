@@ -32,6 +32,7 @@ import {
   NOTE_DEFAULT_ASPECT,
   parseSnapshot,
   SelectionMarquee,
+  ShaderSandbox,
   START_X,
   START_Y,
   WORLD_ORIGIN,
@@ -134,6 +135,7 @@ function App() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [enableSelectionShader, setEnableSelectionShader] = useState(true);
+  const [showShaderSandbox, setShowShaderSandbox] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(300);
   const [inspectorResize, setInspectorResize] = useState<{
     startX: number;
@@ -154,7 +156,6 @@ function App() {
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const keyStateRef = useRef({ shift: false });
   const slideshowTimersRef = useRef<Record<number, number>>({});
-  const frameSlideshowTimersRef = useRef<Record<number, number>>({});
   const documentRef = useRef<BoardDocument>({
     images: [],
     frames: [],
@@ -545,9 +546,6 @@ function App() {
           return {
             ...frame,
             collapsed: !frame.collapsed,
-            slideshowPlaying: frame.collapsed
-              ? false
-              : frame.slideshowPlaying,
           };
         });
 
@@ -556,41 +554,6 @@ function App() {
       1,
     );
     setSelectedFrameId(frameId);
-  };
-
-  const stepFrameSlideshow = (frameId: number, direction: 1 | -1) => {
-    setFrames((current) =>
-      current.map((frame) => {
-        if (frame.id !== frameId || frame.memberIds.length === 0) {
-          return frame;
-        }
-
-        return {
-          ...frame,
-          activeMemberIndex:
-            (Math.max(
-              0,
-              Math.min(
-                frame.activeMemberIndex ?? 0,
-                frame.memberIds.length - 1,
-              ),
-            ) +
-              direction +
-              frame.memberIds.length) %
-            frame.memberIds.length,
-        };
-      }),
-    );
-  };
-
-  const toggleFrameSlideshow = (frameId: number) => {
-    setFrames((current) =>
-      current.map((frame) =>
-        frame.id === frameId
-          ? { ...frame, slideshowPlaying: !frame.slideshowPlaying }
-          : frame,
-      ),
-    );
   };
 
   const layoutNodes = (nodeIds: number[]) => {
@@ -1096,10 +1059,6 @@ function App() {
         window.clearInterval(timer);
       }
       slideshowTimersRef.current = {};
-      for (const timer of Object.values(frameSlideshowTimersRef.current)) {
-        window.clearInterval(timer);
-      }
-      frameSlideshowTimersRef.current = {};
     };
   }, []);
 
@@ -1348,26 +1307,6 @@ function App() {
         return;
       }
 
-      const slideshowPrev =
-        event.key === "ArrowLeft" || event.key === "a" || event.key === "A";
-      const slideshowNext =
-        event.key === "ArrowRight" || event.key === "d" || event.key === "D";
-      if (
-        !event.ctrlKey &&
-        !event.altKey &&
-        !event.metaKey &&
-        (slideshowPrev || slideshowNext)
-      ) {
-        if (!selectedCollapsedFrame) {
-          return;
-        }
-
-        event.preventDefault();
-        const direction: 1 | -1 = slideshowNext ? 1 : -1;
-        stepFrameSlideshow(selectedCollapsedFrame.id, direction);
-        return;
-      }
-
       if (
         !event.ctrlKey &&
         !event.altKey &&
@@ -1419,12 +1358,6 @@ function App() {
         event.key === "ArrowRight";
 
       if (event.key === " " || event.code === "Space") {
-        if (selectedCollapsedFrame) {
-          event.preventDefault();
-          toggleFrameSlideshow(selectedCollapsedFrame.id);
-          return;
-        }
-
         const activeIds =
           selectedIds.length > 0
             ? selectedIds
@@ -1814,34 +1747,6 @@ function App() {
       }, 10000);
     }
   }, [images]);
-
-  useEffect(() => {
-    const shouldPlay = new Set(
-      activeFrames
-        .filter((frame) => frame.collapsed && frame.slideshowPlaying)
-        .map((frame) => frame.id),
-    );
-
-    for (const [idString, timer] of Object.entries(
-      frameSlideshowTimersRef.current,
-    )) {
-      const id = Number(idString);
-      if (!shouldPlay.has(id)) {
-        window.clearInterval(timer);
-        delete frameSlideshowTimersRef.current[id];
-      }
-    }
-
-    for (const id of shouldPlay) {
-      if (frameSlideshowTimersRef.current[id] !== undefined) {
-        continue;
-      }
-
-      frameSlideshowTimersRef.current[id] = window.setInterval(() => {
-        stepFrameSlideshow(id, 1);
-      }, 10000);
-    }
-  }, [activeFrames]);
 
   useEffect(() => {
     const wrapper = boardWrapRef.current;
@@ -3558,6 +3463,7 @@ function App() {
         darkMode={darkMode}
         imageCount={images.length}
         enableSelectionShader={enableSelectionShader}
+        shaderSandboxOpen={showShaderSandbox}
         onAddFiles={(files) => {
           void handleFiles(files);
         }}
@@ -3571,7 +3477,13 @@ function App() {
         onToggleDarkMode={() => {
           setDarkMode((current) => !current);
         }}
+        onToggleShaderSandbox={() => {
+          setShowShaderSandbox((current) => !current);
+        }}
       />
+      {showShaderSandbox ? (
+        <ShaderSandbox darkMode={darkMode} />
+      ) : (
       <section className="app-content" style={appContentStyle}>
         <BoardViewport
           boardRef={boardRef}
@@ -3742,8 +3654,6 @@ function App() {
                     });
                   }}
                   onToggleCollapsed={toggleFrameCollapsed}
-                  onToggleSlideshow={toggleFrameSlideshow}
-                  onStepSlideshow={stepFrameSlideshow}
                 />
               );
             })()
@@ -4145,6 +4055,7 @@ function App() {
           }}
         />
       </section>
+      )}
     </main>
   );
 }
