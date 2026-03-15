@@ -446,113 +446,25 @@ function App() {
   );
 
   useEffect(() => {
-    let didImagesChange = false;
-    let didGraphNodesChange = false;
-    let didConnectionsChange = false;
-    const remappedNodeIds = new Map<string, string>();
-
-    const nextImages = images.map((item) => {
-      if (item.mediaKind === "note") {
-        return item;
-      }
-
-      const legacyGraphNodeId = getMediaGraphNodeId(item.id);
-      const graphNodeId =
-        item.graphNodeId ??
-        createGraphNodeId(MEDIA_NODE_DEFINITION_ID, nextGraphNodeIdRef.current++);
-
-      remappedNodeIds.set(legacyGraphNodeId, graphNodeId);
-
-      if (item.graphNodeId === graphNodeId) {
-        return item;
-      }
-
-      didImagesChange = true;
-      return {
-        ...item,
-        graphNodeId,
-      };
+    const normalizedDocument = normalizeDocument({
+      images,
+      frames,
+      graphNodes,
+      connections,
+      mediaTransforms,
+      darkMode,
     });
 
-    const mediaImageByGraphNodeId = new Map(
-      nextImages
-        .filter((item) => item.mediaKind !== "note")
-        .map((item) => [getResolvedMediaGraphNodeId(item), item]),
-    );
-
-    const nextGraphNodes = graphNodes.filter((graphNode) => {
-      if (graphNode.definitionId !== MEDIA_NODE_DEFINITION_ID) {
-        return true;
-      }
-
-      const keep = mediaImageByGraphNodeId.has(graphNode.id);
-      didGraphNodesChange = didGraphNodesChange || !keep;
-      return keep;
-    });
-
-    const nextGraphNodeById = new Map(
-      nextGraphNodes.map((graphNode) => [graphNode.id, graphNode]),
-    );
-
-    for (const mediaImage of nextImages) {
-      if (mediaImage.mediaKind === "note") {
-        continue;
-      }
-
-      const graphNodeId = getResolvedMediaGraphNodeId(mediaImage);
-      const existing = nextGraphNodeById.get(graphNodeId);
-
-      if (!existing) {
-        const mediaGraphNode: GraphNodeInstance = {
-          id: graphNodeId,
-          definitionId: MEDIA_NODE_DEFINITION_ID,
-          x: mediaImage.x,
-          y: mediaImage.y,
-          width: mediaImage.width,
-          z: mediaImage.z,
-        };
-        nextGraphNodes.push(mediaGraphNode);
-        nextGraphNodeById.set(graphNodeId, mediaGraphNode);
-        didGraphNodesChange = true;
-      } else if (existing.definitionId !== MEDIA_NODE_DEFINITION_ID) {
-        nextGraphNodeById.set(graphNodeId, {
-          ...existing,
-          definitionId: MEDIA_NODE_DEFINITION_ID,
-        });
-        didGraphNodesChange = true;
-      }
+    if (normalizedDocument.images !== images) {
+      setImages(normalizedDocument.images);
     }
-
-    const finalGraphNodes = didGraphNodesChange
-      ? nextGraphNodes.map(
-          (graphNode) => nextGraphNodeById.get(graphNode.id) ?? graphNode,
-        )
-      : graphNodes;
-
-    const nextConnections = connections.map((connection) => {
-      const remappedFromNodeId =
-        remappedNodeIds.get(connection.fromNodeId) ?? connection.fromNodeId;
-      if (remappedFromNodeId === connection.fromNodeId) {
-        return connection;
-      }
-
-      didConnectionsChange = true;
-      return {
-        ...connection,
-        fromNodeId: remappedFromNodeId,
-      };
-    });
-
-    if (didImagesChange) {
-      setImages(nextImages);
+    if (normalizedDocument.graphNodes !== graphNodes) {
+      setGraphNodes(normalizedDocument.graphNodes);
     }
-    if (didGraphNodesChange) {
-      setGraphNodes(finalGraphNodes);
+    if (normalizedDocument.connections !== connections) {
+      setConnections(normalizedDocument.connections);
     }
-    if (didConnectionsChange) {
-      setConnections(nextConnections);
-    }
-  }, [connections, graphNodes, images]);
+  }, [connections, darkMode, frames, graphNodes, images, mediaTransforms]);
 
   const selectedCollapsedFrame = useMemo(
     () =>
@@ -1479,6 +1391,130 @@ function App() {
     setWireDraft(null);
   };
 
+  const normalizeDocument = (document: BoardDocument): BoardDocument => {
+    let didImagesChange = false;
+    let didGraphNodesChange = false;
+    let didConnectionsChange = false;
+    const remappedNodeIds = new Map<string, string>();
+
+    const nextImages = document.images.map((item) => {
+      if (item.mediaKind === "note") {
+        return item;
+      }
+
+      const legacyGraphNodeId = getMediaGraphNodeId(item.id);
+      const graphNodeId =
+        item.graphNodeId ??
+        createGraphNodeId(MEDIA_NODE_DEFINITION_ID, nextGraphNodeIdRef.current++);
+
+      remappedNodeIds.set(legacyGraphNodeId, graphNodeId);
+
+      if (item.graphNodeId === graphNodeId) {
+        return item;
+      }
+
+      didImagesChange = true;
+      return {
+        ...item,
+        graphNodeId,
+      };
+    });
+    const finalImages = didImagesChange ? nextImages : document.images;
+
+    const mediaImageByGraphNodeId = new Map(
+      finalImages
+        .filter((item) => item.mediaKind !== "note")
+        .map((item) => [getResolvedMediaGraphNodeId(item), item]),
+    );
+
+    const nextGraphNodes = document.graphNodes.filter((graphNode) => {
+      if (graphNode.definitionId !== MEDIA_NODE_DEFINITION_ID) {
+        return true;
+      }
+
+      const keep = mediaImageByGraphNodeId.has(graphNode.id);
+      didGraphNodesChange = didGraphNodesChange || !keep;
+      return keep;
+    });
+    const nextGraphNodeById = new Map(
+      nextGraphNodes.map((graphNode) => [graphNode.id, graphNode]),
+    );
+
+    for (const mediaImage of finalImages) {
+      if (mediaImage.mediaKind === "note") {
+        continue;
+      }
+
+      const graphNodeId = getResolvedMediaGraphNodeId(mediaImage);
+      const existing = nextGraphNodeById.get(graphNodeId);
+
+      if (!existing) {
+        const mediaGraphNode = createMediaGraphNodeFromImage(mediaImage);
+        nextGraphNodes.push(mediaGraphNode);
+        nextGraphNodeById.set(graphNodeId, mediaGraphNode);
+        didGraphNodesChange = true;
+      } else if (existing.definitionId !== MEDIA_NODE_DEFINITION_ID) {
+        nextGraphNodeById.set(graphNodeId, {
+          ...existing,
+          definitionId: MEDIA_NODE_DEFINITION_ID,
+        });
+        didGraphNodesChange = true;
+      }
+    }
+
+    const finalGraphNodes = didGraphNodesChange
+      ? nextGraphNodes.map(
+          (graphNode) => nextGraphNodeById.get(graphNode.id) ?? graphNode,
+        )
+      : document.graphNodes;
+
+    const validNodeIds = new Set(finalGraphNodes.map((graphNode) => graphNode.id));
+    const nextConnections: GraphConnection[] = [];
+    for (const connection of document.connections) {
+      const remappedFromNodeId =
+        remappedNodeIds.get(connection.fromNodeId) ?? connection.fromNodeId;
+      const remappedToNodeId =
+        remappedNodeIds.get(connection.toNodeId) ?? connection.toNodeId;
+      const didRemap =
+        remappedFromNodeId !== connection.fromNodeId ||
+        remappedToNodeId !== connection.toNodeId;
+
+      if (
+        !validNodeIds.has(remappedFromNodeId) ||
+        !validNodeIds.has(remappedToNodeId)
+      ) {
+        didConnectionsChange = true;
+        continue;
+      }
+
+      if (didRemap) {
+        didConnectionsChange = true;
+        nextConnections.push({
+          ...connection,
+          fromNodeId: remappedFromNodeId,
+          toNodeId: remappedToNodeId,
+        });
+        continue;
+      }
+
+      nextConnections.push(connection);
+    }
+    const finalConnections = didConnectionsChange
+      ? nextConnections
+      : document.connections;
+
+    if (!didImagesChange && !didGraphNodesChange && !didConnectionsChange) {
+      return document;
+    }
+
+    return {
+      ...document,
+      images: finalImages,
+      graphNodes: finalGraphNodes,
+      connections: finalConnections,
+    };
+  };
+
   const cloneDocument = (document: BoardDocument): BoardDocument => ({
     images: document.images.map((image) => ({
       ...image,
@@ -1500,13 +1536,15 @@ function App() {
   });
 
   const applyDocument = (document: BoardDocument) => {
-    setImages(document.images);
-    setFrames(document.frames);
-    setGraphNodes(document.graphNodes);
-    setConnections(document.connections);
-    setMediaTransforms(document.mediaTransforms);
-    boardSettingsStore.setValue(DARK_MODE_SETTING_ID, document.darkMode);
-    documentRef.current = cloneDocument(document);
+    const normalizedDocument = normalizeDocument(document);
+    setImages(normalizedDocument.images);
+    setFrames(normalizedDocument.frames);
+    setGraphNodes(normalizedDocument.graphNodes);
+    setConnections(normalizedDocument.connections);
+    setMediaTransforms(normalizedDocument.mediaTransforms);
+    boardSettingsStore.setValue(DARK_MODE_SETTING_ID, normalizedDocument.darkMode);
+    documentRef.current = cloneDocument(normalizedDocument);
+    return normalizedDocument;
   };
 
   const restoreSnapshotState = (
@@ -1519,7 +1557,7 @@ function App() {
     const before = options?.recordHistory
       ? cloneDocument(documentRef.current)
       : null;
-    const after = {
+    const after = applyDocument({
       images: snapshotState.loadedImages,
       frames: snapshotState.loadedFrames,
       graphNodes:
@@ -1529,9 +1567,7 @@ function App() {
       connections: snapshotState.loadedConnections,
       mediaTransforms: snapshotState.loadedMediaTransforms,
       darkMode: snapshotState.darkMode,
-    };
-
-    applyDocument(after);
+    });
     if (before) {
       recordHistoryEntry(options?.historyLabel ?? "Load Canvas", before, after);
     }
@@ -1584,9 +1620,9 @@ function App() {
       return null;
     }
 
-    applyDocument(next);
-    recordHistoryEntry(label, before, next, visibilityPriority);
-    return next;
+    const after = applyDocument(next);
+    recordHistoryEntry(label, before, after, visibilityPriority);
+    return after;
   };
 
   const getFrameActiveItem = (frame: BoardFrame) => {
@@ -2274,7 +2310,7 @@ function App() {
     let cancelled = false;
 
     const restorePersistedSnapshot = (snapshotState: ParsedSnapshot) => {
-      const restoredDocument = {
+      applyDocument({
         images: snapshotState.loadedImages,
         frames: snapshotState.loadedFrames,
         graphNodes:
@@ -2284,35 +2320,7 @@ function App() {
         connections: snapshotState.loadedConnections,
         mediaTransforms: snapshotState.loadedMediaTransforms,
         darkMode: snapshotState.darkMode,
-      };
-
-      setImages(restoredDocument.images);
-      setFrames(restoredDocument.frames);
-      setGraphNodes(restoredDocument.graphNodes);
-      setConnections(restoredDocument.connections);
-      setMediaTransforms(restoredDocument.mediaTransforms);
-      boardSettingsStore.setValue(DARK_MODE_SETTING_ID, restoredDocument.darkMode);
-      documentRef.current = {
-        images: restoredDocument.images.map((image) => ({
-          ...image,
-          mediaItems: image.mediaItems?.map((mediaItem) => ({ ...mediaItem })),
-        })),
-        frames: restoredDocument.frames.map((frame) => ({
-          ...frame,
-          memberIds: [...frame.memberIds],
-        })),
-        graphNodes: cloneGraphNodes(restoredDocument.graphNodes),
-        connections: restoredDocument.connections.map((connection) => ({
-          ...connection,
-        })),
-        mediaTransforms: Object.fromEntries(
-          Object.entries(restoredDocument.mediaTransforms).map(([id, settings]) => [
-            Number(id),
-            { ...settings },
-          ]),
-        ),
-        darkMode: restoredDocument.darkMode,
-      };
+      });
 
       setSelectedFrameId(null);
       setSelectedId(null);
@@ -3285,8 +3293,8 @@ function App() {
         ...nextImages.map((image) => createMediaGraphNodeFromImage(image)),
       ],
     };
-    applyDocument(after);
-    recordHistoryEntry(historyLabel, before, after);
+    const appliedAfter = applyDocument(after);
+    recordHistoryEntry(historyLabel, before, appliedAfter);
 
     if (prepared.length > 1) {
       const newIds = prepared.map((item) => item.id);
@@ -3570,8 +3578,8 @@ function App() {
       ...before,
       images: [...before.images, nextNote],
     };
-    applyDocument(after);
-    recordHistoryEntry("Add Note", before, after);
+    const appliedAfter = applyDocument(after);
+    recordHistoryEntry("Add Note", before, appliedAfter);
     setSelectedId(noteId);
     setSelectedIds([noteId]);
   };
@@ -3598,8 +3606,8 @@ function App() {
       graphNodes: [...before.graphNodes, nextGraphNode],
     };
 
-    applyDocument(after);
-    recordHistoryEntry(`Add ${definition.label} Node`, before, after);
+    const appliedAfter = applyDocument(after);
+    recordHistoryEntry(`Add ${definition.label} Node`, before, appliedAfter);
   };
 
   const readClipboardMedia = async () => {
