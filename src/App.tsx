@@ -32,7 +32,6 @@ import {
   getMediaGraphNodeId,
   getBackgroundShaderOption,
   getNodeDefinition,
-  parseMediaGraphNodeId,
   getFrameBounds,
   getGroupBounds,
   getItemHeight,
@@ -762,21 +761,23 @@ function App() {
     [layoutImages],
   );
   const mediaNodeDefinition = getNodeDefinition(MEDIA_NODE_DEFINITION_ID);
+  const getMediaImageForGraphNode = (nodeId: string) => {
+    const graphNode = graphNodeById.get(nodeId);
+    if (!graphNode || graphNode.definitionId !== MEDIA_NODE_DEFINITION_ID) {
+      return null;
+    }
+
+    return mediaNodeByGraphNodeId.get(nodeId) ?? null;
+  };
 
   const getGraphNodeLabel = (nodeId: string) => {
-    const mediaNode = mediaNodeByGraphNodeId.get(nodeId);
-    if (mediaNode) {
-      return mediaNode.name;
-    }
-
-    const mediaId = parseMediaGraphNodeId(nodeId);
-    if (mediaId !== null) {
-      return images.find((item) => item.id === mediaId)?.name ?? "Missing media";
-    }
-
     const graphNode = graphNodeById.get(nodeId);
     if (!graphNode) {
       return nodeId;
+    }
+
+    if (graphNode.definitionId === MEDIA_NODE_DEFINITION_ID) {
+      return getMediaImageForGraphNode(nodeId)?.name ?? "Missing media";
     }
 
     return getNodeDefinition(graphNode.definitionId)?.label ?? graphNode.id;
@@ -784,6 +785,14 @@ function App() {
 
   const getGraphNodeInputConnection = (nodeId: string, portId: string) =>
     resolveInputConnection(connections, nodeId, portId);
+  const getTextureInputConnectionForGraphNode = (graphNode: GraphNodeInstance) => {
+    const textureInput = getNodeDefinition(graphNode.definitionId)?.inputs.find(
+      (port) => port.kind === "texture",
+    );
+    return textureInput
+      ? getGraphNodeInputConnection(graphNode.id, textureInput.id)
+      : null;
+  };
 
   const getBrightnessValue = (graphNode: GraphNodeInstance) =>
     typeof graphNode.params?.brightness === "number"
@@ -805,26 +814,17 @@ function App() {
       return canvas.height / canvas.width;
     }
 
-    const mediaNode = mediaNodeByGraphNodeId.get(nodeId);
-    if (mediaNode) {
-      return mediaNode.aspect;
-    }
-
-    const mediaId = parseMediaGraphNodeId(nodeId);
-    if (mediaId !== null) {
-      return images.find((item) => item.id === mediaId)?.aspect ?? PREVIEW_NODE_EMPTY_ASPECT;
-    }
-
     const graphNode = graphNodeById.get(nodeId);
     if (!graphNode) {
       return PREVIEW_NODE_EMPTY_ASPECT;
     }
 
+    if (graphNode.definitionId === MEDIA_NODE_DEFINITION_ID) {
+      return getMediaImageForGraphNode(nodeId)?.aspect ?? PREVIEW_NODE_EMPTY_ASPECT;
+    }
+
     if (graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID) {
-      const inputConnection = getGraphNodeInputConnection(
-        graphNode.id,
-        BRIGHTNESS_INPUT_PORT_ID,
-      );
+      const inputConnection = getTextureInputConnectionForGraphNode(graphNode);
       return inputConnection
         ? getGraphNodeOutputAspect(inputConnection.fromNodeId, visited)
         : PREVIEW_NODE_EMPTY_ASPECT;
@@ -857,10 +857,7 @@ function App() {
   const previewNodeViews = useMemo(
     () =>
       previewNodes.map((graphNode) => {
-        const inputConnection = getGraphNodeInputConnection(
-          graphNode.id,
-          PREVIEW_INPUT_PORT_ID,
-        );
+        const inputConnection = getTextureInputConnectionForGraphNode(graphNode);
         const aspect = inputConnection
           ? getGraphNodeOutputAspect(inputConnection.fromNodeId)
           : PREVIEW_NODE_EMPTY_ASPECT;
@@ -885,15 +882,12 @@ function App() {
             : null,
         };
       }),
-    [connections, graphNodes, images, outputSurfaceVersion, previewNodes],
+    [outputSurfaceVersion, previewNodes],
   );
   const brightnessNodeViews = useMemo(
     () =>
       brightnessNodes.map((graphNode) => {
-        const inputConnection = getGraphNodeInputConnection(
-          graphNode.id,
-          BRIGHTNESS_INPUT_PORT_ID,
-        );
+        const inputConnection = getTextureInputConnectionForGraphNode(graphNode);
         const height = BRIGHTNESS_NODE_BODY_HEIGHT + CAPTION_HEIGHT + CARD_BORDER_HEIGHT;
 
         return {
@@ -915,15 +909,23 @@ function App() {
           outputCanvas: nodeOutputCanvasesRef.current[graphNode.id] ?? null,
         };
       }),
-    [brightnessNodes, connections, images, outputSurfaceVersion],
+    [brightnessNodes, outputSurfaceVersion],
   );
 
   const getGraphNodeOutputAnchor = (nodeId: string) => {
-    const mediaNode = mediaNodeByGraphNodeId.get(nodeId);
-    const mediaId = mediaNode?.id ?? parseMediaGraphNodeId(nodeId);
-    if (mediaId !== null) {
-      const sourceEntry = displayNodeById.get(mediaId);
-      if (!sourceEntry || sourceEntry.image.mediaKind === "note") {
+    const graphNode = graphNodeById.get(nodeId);
+    if (!graphNode) {
+      return null;
+    }
+
+    if (graphNode.definitionId === MEDIA_NODE_DEFINITION_ID) {
+      const mediaNode = getMediaImageForGraphNode(nodeId);
+      if (!mediaNode) {
+        return null;
+      }
+
+      const sourceEntry = displayNodeById.get(mediaNode.id);
+      if (!sourceEntry) {
         return null;
       }
 
@@ -934,11 +936,6 @@ function App() {
           getItemHeight(sourceEntry.image) * 0.5 +
           WORLD_ORIGIN,
       };
-    }
-
-    const graphNode = graphNodeById.get(nodeId);
-    if (!graphNode) {
-      return null;
     }
 
     if (graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID) {
@@ -1127,7 +1124,7 @@ function App() {
   };
 
   const renderMediaNodeOutputSurface = (
-    graphNodeId: string,
+    graphNode: GraphNodeInstance,
     node: BoardImage,
   ) => {
     if (node.mediaKind === "note") {
@@ -1154,9 +1151,9 @@ function App() {
       return false;
     }
 
-    const outputWidth = Math.max(1, Math.round(node.width));
-    const outputHeight = Math.max(1, Math.round(node.width * node.aspect));
-    const canvas = ensureNodeOutputCanvas(graphNodeId, outputWidth, outputHeight);
+    const outputWidth = Math.max(1, Math.round(graphNode.width));
+    const outputHeight = Math.max(1, Math.round(graphNode.width * node.aspect));
+    const canvas = ensureNodeOutputCanvas(graphNode.id, outputWidth, outputHeight);
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       return false;
@@ -1246,29 +1243,18 @@ function App() {
 
     visited.add(nodeId);
 
-    const mediaNode =
-      mediaNodeByGraphNodeId.get(nodeId) ??
-      (() => {
-        const mediaId = parseMediaGraphNodeId(nodeId);
-        return mediaId !== null
-          ? images.find((item) => item.id === mediaId && item.mediaKind !== "note") ??
-              null
-          : null;
-      })();
-    if (mediaNode) {
-      return renderMediaNodeOutputSurface(nodeId, mediaNode);
-    }
-
     const graphNode = graphNodeById.get(nodeId);
     if (!graphNode) {
       return false;
     }
 
+    if (graphNode.definitionId === MEDIA_NODE_DEFINITION_ID) {
+      const mediaNode = getMediaImageForGraphNode(nodeId);
+      return mediaNode ? renderMediaNodeOutputSurface(graphNode, mediaNode) : false;
+    }
+
     if (graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID) {
-      const inputConnection = getGraphNodeInputConnection(
-        graphNode.id,
-        BRIGHTNESS_INPUT_PORT_ID,
-      );
+      const inputConnection = getTextureInputConnectionForGraphNode(graphNode);
       if (!inputConnection) {
         return false;
       }
@@ -1294,16 +1280,13 @@ function App() {
 
     visited.add(nodeId);
 
-    const mediaNode =
-      mediaNodeByGraphNodeId.get(nodeId) ??
-      (() => {
-        const mediaId = parseMediaGraphNodeId(nodeId);
-        return mediaId !== null
-          ? images.find((item) => item.id === mediaId && item.mediaKind !== "note") ??
-              null
-          : null;
-      })();
-    if (mediaNode) {
+    const graphNode = graphNodeById.get(nodeId);
+    if (!graphNode) {
+      return false;
+    }
+
+    if (graphNode.definitionId === MEDIA_NODE_DEFINITION_ID) {
+      const mediaNode = getMediaImageForGraphNode(nodeId);
       return Boolean(
         mediaNode &&
           (mediaNode.mediaKind === "video" ||
@@ -1311,14 +1294,8 @@ function App() {
       );
     }
 
-    const graphNode = graphNodeById.get(nodeId);
-    if (
-      graphNode?.definitionId === BRIGHTNESS_NODE_DEFINITION_ID
-    ) {
-      const inputConnection = getGraphNodeInputConnection(
-        graphNode.id,
-        BRIGHTNESS_INPUT_PORT_ID,
-      );
+    if (graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID) {
+      const inputConnection = getTextureInputConnectionForGraphNode(graphNode);
       return inputConnection
         ? graphNodeUsesAnimation(inputConnection.fromNodeId, visited)
         : false;
@@ -2984,21 +2961,15 @@ function App() {
   }, [activeFrames, selectedFrameId]);
 
   useEffect(() => {
-    const validMediaNodeIds = new Set(
-      images
-        .filter((item) => item.mediaKind !== "note")
-        .map((item) => getResolvedMediaGraphNodeId(item)),
-    );
     const validGraphNodeIds = new Set(graphNodes.map((graphNode) => graphNode.id));
-    const validOutputNodeIds = new Set<string>([
-      ...validMediaNodeIds,
-      ...graphNodes
+    const validOutputNodeIds = new Set<string>(
+      graphNodes
         .filter(
           (graphNode) =>
             (getNodeDefinition(graphNode.definitionId)?.outputs.length ?? 0) > 0,
         )
         .map((graphNode) => graphNode.id),
-    ]);
+    );
     const validInputNodeIds = new Set<string>(
       graphNodes
         .filter(
@@ -3014,19 +2985,13 @@ function App() {
           validOutputNodeIds.has(connection.fromNodeId) &&
           validInputNodeIds.has(connection.toNodeId) &&
           connection.fromNodeId !== connection.toNodeId &&
-          (validMediaNodeIds.has(connection.fromNodeId) ||
-            validGraphNodeIds.has(connection.fromNodeId)),
+          validGraphNodeIds.has(connection.fromNodeId),
       ),
     );
   }, [graphNodes, images]);
 
   useEffect(() => {
-    const validIds = new Set<string>([
-      ...images
-        .filter((item) => item.mediaKind !== "note")
-        .map((item) => getResolvedMediaGraphNodeId(item)),
-      ...graphNodes.map((graphNode) => graphNode.id),
-    ]);
+    const validIds = new Set<string>(graphNodes.map((graphNode) => graphNode.id));
     let didChange = false;
 
     for (const key of Object.keys(nodeOutputCanvasesRef.current)) {
@@ -3047,20 +3012,14 @@ function App() {
     const outputRoots = new Set<string>();
 
     for (const brightnessNode of brightnessNodes) {
-      const inputConnection = getGraphNodeInputConnection(
-        brightnessNode.id,
-        BRIGHTNESS_INPUT_PORT_ID,
-      );
+      const inputConnection = getTextureInputConnectionForGraphNode(brightnessNode);
       if (inputConnection) {
         outputRoots.add(brightnessNode.id);
       }
     }
 
     for (const previewNode of previewNodes) {
-      const inputConnection = getGraphNodeInputConnection(
-        previewNode.id,
-        PREVIEW_INPUT_PORT_ID,
-      );
+      const inputConnection = getTextureInputConnectionForGraphNode(previewNode);
       if (inputConnection) {
         outputRoots.add(inputConnection.fromNodeId);
       }
