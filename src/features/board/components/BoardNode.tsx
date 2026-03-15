@@ -13,6 +13,7 @@ type BoardNodeProps = {
   displayX: number
   displayY: number
   displayWidth: number
+  outputConnected: boolean
   broken: boolean
   mediaTransformCss: string
   mediaTransformOrigin: string
@@ -24,6 +25,7 @@ type BoardNodeProps = {
   onPointerDown: (event: ReactPointerEvent, id: number) => void
   onContextMenu: (event: ReactMouseEvent, id: number) => void
   onResizePointerDown: (event: ReactPointerEvent, id: number) => void
+  onOutputPointerDown: (event: ReactPointerEvent, id: number) => void
   onDisableSelectionShader: () => void
   onNoteFocusChange: (focused: boolean) => void
   onNoteMarkdownChange: (id: number, markdown: string) => void
@@ -43,6 +45,7 @@ function BoardNode({
   displayX,
   displayY,
   displayWidth,
+  outputConnected,
   broken,
   mediaTransformCss,
   mediaTransformOrigin,
@@ -54,6 +57,7 @@ function BoardNode({
   onPointerDown,
   onContextMenu,
   onResizePointerDown,
+  onOutputPointerDown,
   onDisableSelectionShader,
   onNoteFocusChange,
   onNoteMarkdownChange,
@@ -149,6 +153,15 @@ function BoardNode({
         onPointerDown={(event) => onResizePointerDown(event, image.id)}
         aria-label={`Resize ${image.name}`}
       />
+
+      {image.mediaKind !== 'note' && (
+        <button
+          type="button"
+          className={`node-output-socket ${outputConnected ? 'is-connected' : ''}`}
+          onPointerDown={(event) => onOutputPointerDown(event, image.id)}
+          aria-label={`Connect ${image.name} to preview`}
+        />
+      )}
 
       {seekPanelOpen && (
         <SeekPanel

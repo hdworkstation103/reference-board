@@ -15,9 +15,12 @@ import {
   BoardViewport,
   boardSettingsStore,
   buildSnapshot,
+  CAPTION_HEIGHT,
   clearPersistedBoardSnapshot,
+  ConnectionWireLayer,
   ContextMenu,
   createMediaItemFromFile,
+  CARD_BORDER_HEIGHT,
   DEFAULT_BACKGROUND_SHADER_ID,
   extractDropSourceUrls,
   fileToDataUrl,
@@ -36,6 +39,7 @@ import {
   MIN_IMAGE_WIDTH,
   NOTE_DEFAULT_ASPECT,
   parseSnapshot,
+  PreviewNode,
   savePersistedBoardSnapshot,
   SelectionMarquee,
   SettingsPopover,
@@ -110,10 +114,29 @@ const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
 const BOARD_PERSISTENCE_DEBOUNCE_MS = 150;
 const DARK_MODE_SETTING_ID = "appearance.darkMode";
 const SELECTION_SHADER_SETTING_ID = "rendering.selectionShader";
-  const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
+const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
 const BACKGROUND_SHADER_SETTING_ID = "rendering.backgroundShader";
 const INSPECTOR_WIDTH_SETTING_ID = "workspace.inspectorWidth";
 const SHADER_SANDBOX_SETTING_ID = "workspace.shaderSandbox";
+const PREVIEW_NODE_WIDTH = 240;
+const PREVIEW_NODE_EMPTY_ASPECT = 0.62;
+
+type PreviewNodeState = {
+  x: number;
+  y: number;
+  width: number;
+};
+
+type PreviewDragState = {
+  offsetX: number;
+  offsetY: number;
+};
+
+type WireDraftState = {
+  sourceId: number;
+  pointerX: number;
+  pointerY: number;
+};
 
 function App() {
   const boardSettings = useBoardSettings();
@@ -172,6 +195,14 @@ function App() {
     startX: number;
     startWidth: number;
   } | null>(null);
+  const [previewNode, setPreviewNode] = useState<PreviewNodeState>({
+    x: START_X + 420,
+    y: START_Y + 40,
+    width: PREVIEW_NODE_WIDTH,
+  });
+  const [previewDrag, setPreviewDrag] = useState<PreviewDragState | null>(null);
+  const [previewSourceId, setPreviewSourceId] = useState<number | null>(null);
+  const [wireDraft, setWireDraft] = useState<WireDraftState | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
   const nextIdRef = useRef(1);
@@ -436,6 +467,137 @@ function App() {
     const scaleX = settings.flipHorizontal ? -settings.scaleX : settings.scaleX;
     return `translate(${settings.translateX}px, ${settings.translateY}px) rotate(${settings.rotateDeg}deg) scale(${scaleX}, ${settings.scaleY})`;
   };
+  const displayNodes = useMemo(
+    () =>
+      visibleImages.map((image) => {
+        const scalePreview = scaleMode?.startItems[image.id];
+        const movePreview = moveMode?.startItems[image.id];
+        let displayX = image.x;
+        let displayY = image.y;
+        let displayWidth = image.width;
+
+        if (scaleMode && scalePreview) {
+          displayX =
+            scaleMode.centerX +
+            (scalePreview.x - scaleMode.centerX) * scaleMode.previewScale;
+          displayY =
+            scaleMode.centerY +
+            (scalePreview.y - scaleMode.centerY) * scaleMode.previewScale;
+          displayWidth = Math.max(
+            MIN_IMAGE_WIDTH,
+            scalePreview.width * scaleMode.previewScale,
+          );
+        } else if (moveMode && movePreview) {
+          displayX = movePreview.x + moveMode.offsetX;
+          displayY = movePreview.y + moveMode.offsetY;
+        }
+
+        return {
+          image,
+          displayX,
+          displayY,
+          displayWidth,
+        };
+      }),
+    [moveMode, scaleMode, visibleImages],
+  );
+  const displayNodeById = useMemo(
+    () => new Map(displayNodes.map((entry) => [entry.image.id, entry])),
+    [displayNodes],
+  );
+  const previewSource = useMemo(
+    () =>
+      previewSourceId !== null
+        ? images.find(
+            (item) => item.id === previewSourceId && item.mediaKind !== "note",
+          ) ?? null
+        : null,
+    [images, previewSourceId],
+  );
+  const previewAspect = previewSource?.aspect ?? PREVIEW_NODE_EMPTY_ASPECT;
+  const previewMediaHeight = previewNode.width * previewAspect;
+  const previewBounds = useMemo(
+    () => ({
+      left: previewNode.x,
+      top: previewNode.y,
+      right: previewNode.x + previewNode.width,
+      bottom:
+        previewNode.y +
+        previewMediaHeight +
+        CAPTION_HEIGHT +
+        CARD_BORDER_HEIGHT,
+    }),
+    [previewMediaHeight, previewNode],
+  );
+  const previewDisplaySrc =
+    previewSource?.isGif && previewSource.paused && previewSource.gifFreezeSrc
+      ? previewSource.gifFreezeSrc
+      : previewSource?.src ?? "";
+  const previewShouldUseBlurBg =
+    previewSource?.mediaKind === "image" &&
+    !previewSource.isGif &&
+    (previewSource.mediaItems?.length ?? 0) > 1;
+  const previewTransformSettings = previewSource
+    ? getMediaTransformForNode(previewSource.id)
+    : DEFAULT_MEDIA_TRANSFORM;
+  const previewNodeZIndex = useMemo(
+    () => Math.max(...images.map((item) => item.z), 0) + 1,
+    [images],
+  );
+  const wires = useMemo(() => {
+    const nextWires: Array<{
+      id: string;
+      startX: number;
+      startY: number;
+      endX: number;
+      endY: number;
+      draft?: boolean;
+    }> = [];
+    const previewInputX = previewNode.x - 12;
+    const previewInputY = previewNode.y + previewMediaHeight / 2;
+
+    if (previewSourceId !== null) {
+      const sourceEntry = displayNodeById.get(previewSourceId);
+      if (sourceEntry && sourceEntry.image.mediaKind !== "note") {
+        nextWires.push({
+          id: `preview-${previewSourceId}`,
+          startX: sourceEntry.displayX + sourceEntry.displayWidth + 12 + WORLD_ORIGIN,
+          startY:
+            sourceEntry.displayY +
+            sourceEntry.displayWidth * sourceEntry.image.aspect * 0.5 +
+            WORLD_ORIGIN,
+          endX: previewInputX + WORLD_ORIGIN,
+          endY: previewInputY + WORLD_ORIGIN,
+        });
+      }
+    }
+
+    if (wireDraft) {
+      const sourceEntry = displayNodeById.get(wireDraft.sourceId);
+      if (sourceEntry && sourceEntry.image.mediaKind !== "note") {
+        nextWires.push({
+          id: `draft-${wireDraft.sourceId}`,
+          startX: sourceEntry.displayX + sourceEntry.displayWidth + 12 + WORLD_ORIGIN,
+          startY:
+            sourceEntry.displayY +
+            sourceEntry.displayWidth * sourceEntry.image.aspect * 0.5 +
+            WORLD_ORIGIN,
+          endX: wireDraft.pointerX + WORLD_ORIGIN,
+          endY: wireDraft.pointerY + WORLD_ORIGIN,
+          draft: true,
+        });
+      }
+    }
+
+    return nextWires;
+  }, [
+    displayNodeById,
+    previewMediaHeight,
+    previewNode.x,
+    previewNode.y,
+    previewSourceId,
+    wireDraft,
+  ]);
 
   const updateSelectedNodeTransform = (
     patch: Partial<MediaTransformSettings>,
@@ -497,6 +659,9 @@ function App() {
     setGifSeekFrames({});
     setBrokenMediaIds({});
     setContextMenu(null);
+    setPreviewDrag(null);
+    setPreviewSourceId(null);
+    setWireDraft(null);
   };
 
   const cloneDocument = (document: BoardDocument): BoardDocument => ({
@@ -1968,6 +2133,19 @@ function App() {
   }, [activeFrames, selectedFrameId]);
 
   useEffect(() => {
+    if (previewSourceId === null) {
+      return;
+    }
+
+    const previewSourceStillExists = images.some(
+      (item) => item.id === previewSourceId && item.mediaKind !== "note",
+    );
+    if (!previewSourceStillExists) {
+      setPreviewSourceId(null);
+    }
+  }, [images, previewSourceId]);
+
+  useEffect(() => {
     const activeGroupIds = selectedIds.filter((id) =>
       images.some((item) => item.id === id),
     );
@@ -2882,6 +3060,59 @@ function App() {
     });
   };
 
+  const onOutputPointerDown = (event: ReactPointerEvent, id: number) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const point = getBoardPointer(event);
+    const sourceNode = images.find(
+      (item) => item.id === id && item.mediaKind !== "note",
+    );
+    if (!point || !sourceNode) {
+      return;
+    }
+
+    closeContextMenu();
+    setSelectedFrameId(null);
+    setSelectedId(id);
+    setSelectedIds([id]);
+    setPreviewDrag(null);
+    setWireDraft({
+      sourceId: id,
+      pointerX: point.x,
+      pointerY: point.y,
+    });
+
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  };
+
+  const onPreviewNodePointerDown = (event: ReactPointerEvent) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const point = getBoardPointer(event);
+    if (!point) {
+      return;
+    }
+
+    closeContextMenu();
+    setPreviewDrag({
+      offsetX: point.x - previewNode.x,
+      offsetY: point.y - previewNode.y,
+    });
+    setWireDraft(null);
+
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  };
+
   const onResizePointerDown = (event: ReactPointerEvent, id: number) => {
     if (event.button === 0 && (scaleMode || moveMode)) {
       event.preventDefault();
@@ -3108,6 +3339,28 @@ function App() {
       return;
     }
     lastPointerRef.current = point;
+
+    if (wireDraft) {
+      setWireDraft((current) =>
+        current
+          ? {
+              ...current,
+              pointerX: point.x,
+              pointerY: point.y,
+            }
+          : current,
+      );
+      return;
+    }
+
+    if (previewDrag) {
+      setPreviewNode((current) => ({
+        ...current,
+        x: point.x - previewDrag.offsetX,
+        y: point.y - previewDrag.offsetY,
+      }));
+      return;
+    }
 
     if (scaleMode) {
       const nextDistance = Math.max(
@@ -3419,6 +3672,31 @@ function App() {
   };
 
   const stopDrag = (event?: ReactPointerEvent<HTMLElement>) => {
+    if (wireDraft) {
+      const point =
+        event !== undefined
+          ? getBoardPointFromClient(event.clientX, event.clientY)
+          : null;
+      const droppedOnPreview =
+        point !== null &&
+        point.x >= previewBounds.left &&
+        point.x <= previewBounds.right &&
+        point.y >= previewBounds.top &&
+        point.y <= previewBounds.bottom;
+
+      if (droppedOnPreview) {
+        setPreviewSourceId(wireDraft.sourceId);
+      }
+
+      setWireDraft(null);
+      return;
+    }
+
+    if (previewDrag) {
+      setPreviewDrag(null);
+      return;
+    }
+
     const shouldMergeOnDrop =
       Boolean(event?.shiftKey || keyStateRef.current.shift) &&
       interaction?.kind === "move" &&
@@ -3594,6 +3872,7 @@ function App() {
     setInteraction(null);
     setPan(null);
     setMarquee(null);
+    setPreviewDrag(null);
   };
 
   const clearBoard = () => {
@@ -3786,6 +4065,12 @@ function App() {
             setSelectedIds([]);
           }}
         >
+          <ConnectionWireLayer
+            width={WORLD_SIZE}
+            height={WORLD_SIZE}
+            wires={wires}
+          />
+
           {frameViews.map(({ frame, bounds }) => (
             (() => {
               const activeItem = getFrameActiveItem(frame);
@@ -3838,33 +4123,25 @@ function App() {
             })()
           ))}
 
-          {visibleImages.map((image) => {
-            const activeScaleMode = scaleMode;
-            const activeMoveMode = moveMode;
-            const scalePreview = activeScaleMode?.startItems[image.id];
-            const movePreview = activeMoveMode?.startItems[image.id];
-            let displayX = image.x;
-            let displayY = image.y;
-            let displayWidth = image.width;
-
-            if (activeScaleMode && scalePreview) {
-              displayX =
-                activeScaleMode.centerX +
-                (scalePreview.x - activeScaleMode.centerX) *
-                  activeScaleMode.previewScale;
-              displayY =
-                activeScaleMode.centerY +
-                (scalePreview.y - activeScaleMode.centerY) *
-                  activeScaleMode.previewScale;
-              displayWidth = Math.max(
-                MIN_IMAGE_WIDTH,
-                scalePreview.width * activeScaleMode.previewScale,
-              );
-            } else if (activeMoveMode && movePreview) {
-              displayX = movePreview.x + activeMoveMode.offsetX;
-              displayY = movePreview.y + activeMoveMode.offsetY;
+          <PreviewNode
+            x={previewNode.x}
+            y={previewNode.y}
+            width={previewNode.width}
+            aspect={previewAspect}
+            zIndex={previewNodeZIndex}
+            sourceImage={previewSource}
+            displaySrc={previewDisplaySrc}
+            mediaTransformCss={getTransformCss(previewTransformSettings)}
+            mediaTransformOrigin={getTransformOrigin(previewTransformSettings)}
+            shouldUseBlurBg={Boolean(previewShouldUseBlurBg)}
+            isDropTarget={Boolean(wireDraft)}
+            videoCurrentTime={
+              previewSource ? videoTimelines[previewSource.id]?.current : undefined
             }
+            onPointerDown={onPreviewNodePointerDown}
+          />
 
+          {displayNodes.map(({ image, displayX, displayY, displayWidth }) => {
             return (
               <BoardNode
                 key={image.id}
@@ -3873,6 +4150,7 @@ function App() {
                 displayX={displayX}
                 displayY={displayY}
                 displayWidth={displayWidth}
+                outputConnected={previewSourceId === image.id}
                 broken={Boolean(activeBrokenMediaIds[image.id])}
                 mediaTransformCss={getTransformCss(
                   getMediaTransformForNode(image.id),
@@ -3889,11 +4167,12 @@ function App() {
                 gifFrameCount={gifFrameCounts[image.id] ?? 1}
                 gifSeekFrame={gifSeekFrames[image.id] ?? 0}
                 onPointerDown={onPointerDown}
-              onContextMenu={onNodeContextMenu}
-              onResizePointerDown={onResizePointerDown}
-              onDisableSelectionShader={() => {
-                boardSettingsStore.setValue(SELECTION_SHADER_SETTING_ID, false);
-              }}
+                onContextMenu={onNodeContextMenu}
+                onResizePointerDown={onResizePointerDown}
+                onOutputPointerDown={onOutputPointerDown}
+                onDisableSelectionShader={() => {
+                  boardSettingsStore.setValue(SELECTION_SHADER_SETTING_ID, false);
+                }}
                 onNoteFocusChange={setIsEditorFocused}
                 onNoteMarkdownChange={(id, markdown) => {
                   setImages((current) =>
