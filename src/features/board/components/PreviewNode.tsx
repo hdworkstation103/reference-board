@@ -1,5 +1,4 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import type { BoardImage } from '../model'
 import { CAPTION_HEIGHT, CARD_BORDER_HEIGHT, WORLD_ORIGIN } from '../constants'
 import TexturePreviewSurface from './TexturePreviewSurface'
 
@@ -9,7 +8,8 @@ type PreviewNodeProps = {
   width: number
   aspect: number
   zIndex: number
-  sourceImage: BoardImage | null
+  hasInput: boolean
+  sourceLabel: string | null
   sourceCanvas: HTMLCanvasElement | null
   isDropTarget: boolean
   onPointerDown: (event: ReactPointerEvent) => void
@@ -21,7 +21,8 @@ function PreviewNode({
   width,
   aspect,
   zIndex,
-  sourceImage,
+  hasInput,
+  sourceLabel,
   sourceCanvas,
   isDropTarget,
   onPointerDown,
@@ -45,7 +46,7 @@ function PreviewNode({
       onPointerDown={onPointerDown}
     >
       <div className="preview-node-input" aria-hidden="true" />
-      {sourceImage && sourceCanvas ? (
+      {hasInput && sourceCanvas ? (
         <div className="media-frame node-body" style={{ height: `${width * aspect}px` }}>
           <TexturePreviewSurface className="media-content" source={sourceCanvas} />
         </div>
@@ -53,19 +54,19 @@ function PreviewNode({
         <div className="preview-node-placeholder" style={{ height: `${width * aspect}px` }}>
           <span className="preview-node-eyebrow">Preview</span>
           <strong className="preview-node-title">
-            {sourceImage ? 'Rendering output' : 'Awaiting input'}
+            {hasInput ? 'Rendering output' : 'Awaiting input'}
           </strong>
           <span className="preview-node-copy">
-            {sourceImage
+            {hasInput
               ? 'Connected node output is warming up.'
-              : 'Drag a media output socket here to stream a node surface.'}
+              : 'Drag a texture output socket here to stream a node surface.'}
           </span>
         </div>
       )}
       <figcaption className="node-footer preview-node-footer">
         <span className="caption-name">Preview</span>
         <span className="preview-node-source">
-          {sourceImage ? sourceImage.name : 'No source connected'}
+          {sourceLabel ?? 'No source connected'}
         </span>
       </figcaption>
     </figure>

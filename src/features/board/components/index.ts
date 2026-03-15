@@ -1,6 +1,7 @@
 export { default as AppToolbar } from "./AppToolbar";
 export { default as BoardNode } from "./BoardNode";
 export { default as BoardViewport } from "./BoardViewport";
+export { default as BrightnessNode } from "./BrightnessNode";
 export { default as ConnectionWireLayer } from "./ConnectionWireLayer";
 export { default as ContextMenu } from "./ContextMenu";
 export { default as FrameNode } from "./FrameNode";

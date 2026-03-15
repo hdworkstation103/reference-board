@@ -14,7 +14,11 @@ import {
   BoardNode,
   BoardViewport,
   boardSettingsStore,
+  BrightnessNode,
   buildSnapshot,
+  BRIGHTNESS_INPUT_PORT_ID,
+  BRIGHTNESS_NODE_DEFINITION_ID,
+  BRIGHTNESS_OUTPUT_PORT_ID,
   CAPTION_HEIGHT,
   clearPersistedBoardSnapshot,
   ConnectionWireLayer,
@@ -25,7 +29,10 @@ import {
   extractDropSourceUrls,
   fileToDataUrl,
   FrameNode,
+  getMediaGraphNodeId,
   getBackgroundShaderOption,
+  getNodeDefinition,
+  parseMediaGraphNodeId,
   getFrameBounds,
   getGroupBounds,
   getItemHeight,
@@ -37,10 +44,15 @@ import {
   InspectorPanel,
   loadPersistedBoardSnapshot,
   MIN_IMAGE_WIDTH,
+  MEDIA_NODE_DEFINITION_ID,
+  MEDIA_OUTPUT_PORT_ID,
   NOTE_DEFAULT_ASPECT,
   parseSnapshot,
   PreviewNode,
+  PREVIEW_INPUT_PORT_ID,
+  PREVIEW_NODE_DEFINITION_ID,
   savePersistedBoardSnapshot,
+  resolveInputConnection,
   SelectionMarquee,
   SettingsPopover,
   ShaderSandbox,
@@ -73,6 +85,7 @@ import type {
   ParsedSnapshot,
   PreparedMedia,
   ScaleModeState,
+  GraphConnection,
 } from "./features/board";
 
 type GifFrameLike = CanvasImageSource & {
@@ -118,22 +131,30 @@ const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
 const BACKGROUND_SHADER_SETTING_ID = "rendering.backgroundShader";
 const INSPECTOR_WIDTH_SETTING_ID = "workspace.inspectorWidth";
 const SHADER_SANDBOX_SETTING_ID = "workspace.shaderSandbox";
+const BRIGHTNESS_NODE_WIDTH = 220;
+const BRIGHTNESS_NODE_BODY_HEIGHT = 146;
+const BRIGHTNESS_DEFAULT_VALUE = 1.35;
 const PREVIEW_NODE_WIDTH = 240;
 const PREVIEW_NODE_EMPTY_ASPECT = 0.62;
+const BRIGHTNESS_GRAPH_NODE_ID = "brightness:1";
+const PREVIEW_GRAPH_NODE_ID = "preview:1";
 
-type PreviewNodeState = {
+type UtilityNodeState = {
   x: number;
   y: number;
   width: number;
 };
 
-type PreviewDragState = {
+type FloatingNodeDragState = {
+  nodeId: string;
   offsetX: number;
   offsetY: number;
 };
 
 type WireDraftState = {
-  sourceId: number;
+  sourceNodeId: string;
+  sourcePortId: string;
+  kind: GraphConnection["kind"];
   pointerX: number;
   pointerY: number;
 };
@@ -195,17 +216,27 @@ function App() {
     startX: number;
     startWidth: number;
   } | null>(null);
-  const [previewNode, setPreviewNode] = useState<PreviewNodeState>({
+  const [brightnessNode, setBrightnessNode] = useState<UtilityNodeState>({
     x: START_X + 420,
+    y: START_Y + 52,
+    width: BRIGHTNESS_NODE_WIDTH,
+  });
+  const [brightnessValue, setBrightnessValue] = useState(
+    BRIGHTNESS_DEFAULT_VALUE,
+  );
+  const [previewNode, setPreviewNode] = useState<UtilityNodeState>({
+    x: START_X + 700,
     y: START_Y + 40,
     width: PREVIEW_NODE_WIDTH,
   });
-  const [previewDrag, setPreviewDrag] = useState<PreviewDragState | null>(null);
-  const [previewSourceId, setPreviewSourceId] = useState<number | null>(null);
+  const [floatingNodeDrag, setFloatingNodeDrag] =
+    useState<FloatingNodeDragState | null>(null);
+  const [connections, setConnections] = useState<GraphConnection[]>([]);
   const [wireDraft, setWireDraft] = useState<WireDraftState | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
   const nextIdRef = useRef(1);
+  const nextConnectionIdRef = useRef(1);
   const nextFrameIdRef = useRef(1);
   const nextHistoryIdRef = useRef(1);
   const nextZRef = useRef(1);
@@ -214,7 +245,7 @@ function App() {
   >({});
   const groupFadeTimeoutRef = useRef<number | null>(null);
   const imageRefs = useRef<Record<number, HTMLImageElement | null>>({});
-  const nodeOutputCanvasesRef = useRef<Record<number, HTMLCanvasElement>>({});
+  const nodeOutputCanvasesRef = useRef<Record<string, HTMLCanvasElement>>({});
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
   const pendingVideoSeekRef = useRef<Record<number, number>>({});
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -508,41 +539,252 @@ function App() {
     () => new Map(displayNodes.map((entry) => [entry.image.id, entry])),
     [displayNodes],
   );
-  const previewSource = useMemo(
-    () =>
-      previewSourceId !== null
-        ? images.find(
-            (item) => item.id === previewSourceId && item.mediaKind !== "note",
-          ) ?? null
-        : null,
-    [images, previewSourceId],
+  const brightnessNodeDefinition = getNodeDefinition(
+    BRIGHTNESS_NODE_DEFINITION_ID,
   );
-  const previewAspect = previewSource?.aspect ?? PREVIEW_NODE_EMPTY_ASPECT;
+  const previewNodeDefinition = getNodeDefinition(PREVIEW_NODE_DEFINITION_ID);
+  const mediaNodeDefinition = getNodeDefinition(MEDIA_NODE_DEFINITION_ID);
+  const brightnessInputConnection = useMemo(
+    () =>
+      resolveInputConnection(
+        connections,
+        BRIGHTNESS_GRAPH_NODE_ID,
+        BRIGHTNESS_INPUT_PORT_ID,
+      ),
+    [connections],
+  );
+  const previewConnection = useMemo(
+    () =>
+      resolveInputConnection(
+        connections,
+        PREVIEW_GRAPH_NODE_ID,
+        PREVIEW_INPUT_PORT_ID,
+      ),
+    [connections],
+  );
+
+  const getGraphNodeLabel = (nodeId: string) => {
+    const mediaId = parseMediaGraphNodeId(nodeId);
+    if (mediaId !== null) {
+      return (
+        images.find((item) => item.id === mediaId && item.mediaKind !== "note")
+          ?.name ?? "Missing media"
+      );
+    }
+
+    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
+      return "Brightness";
+    }
+
+    if (nodeId === PREVIEW_GRAPH_NODE_ID) {
+      return "Preview";
+    }
+
+    return nodeId;
+  };
+
+  const getGraphNodeOutputAspect = (
+    nodeId: string,
+    visited = new Set<string>(),
+  ): number => {
+    if (visited.has(nodeId)) {
+      return PREVIEW_NODE_EMPTY_ASPECT;
+    }
+
+    visited.add(nodeId);
+
+    const canvas = nodeOutputCanvasesRef.current[nodeId];
+    if (canvas?.width && canvas.height) {
+      return canvas.height / canvas.width;
+    }
+
+    const mediaId = parseMediaGraphNodeId(nodeId);
+    if (mediaId !== null) {
+      return (
+        images.find((item) => item.id === mediaId && item.mediaKind !== "note")
+          ?.aspect ?? PREVIEW_NODE_EMPTY_ASPECT
+      );
+    }
+
+    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
+      const inputConnection = resolveInputConnection(
+        connections,
+        BRIGHTNESS_GRAPH_NODE_ID,
+        BRIGHTNESS_INPUT_PORT_ID,
+      );
+      return inputConnection
+        ? getGraphNodeOutputAspect(inputConnection.fromNodeId, visited)
+        : PREVIEW_NODE_EMPTY_ASPECT;
+    }
+
+    return PREVIEW_NODE_EMPTY_ASPECT;
+  };
+
+  const previewAspect = useMemo(
+    () =>
+      previewConnection
+        ? getGraphNodeOutputAspect(previewConnection.fromNodeId)
+        : PREVIEW_NODE_EMPTY_ASPECT,
+    [connections, images, outputSurfaceVersion, previewConnection],
+  );
   const previewMediaHeight = previewNode.width * previewAspect;
+  const previewHeight =
+    previewMediaHeight + CAPTION_HEIGHT + CARD_BORDER_HEIGHT;
+  const brightnessHeight =
+    BRIGHTNESS_NODE_BODY_HEIGHT + CAPTION_HEIGHT + CARD_BORDER_HEIGHT;
   const previewBounds = useMemo(
     () => ({
       left: previewNode.x,
       top: previewNode.y,
       right: previewNode.x + previewNode.width,
-      bottom:
-        previewNode.y +
-        previewMediaHeight +
-        CAPTION_HEIGHT +
-        CARD_BORDER_HEIGHT,
+      bottom: previewNode.y + previewHeight,
     }),
-    [previewMediaHeight, previewNode],
+    [previewHeight, previewNode],
+  );
+  const brightnessBounds = useMemo(
+    () => ({
+      left: brightnessNode.x,
+      top: brightnessNode.y,
+      right: brightnessNode.x + brightnessNode.width,
+      bottom: brightnessNode.y + brightnessHeight,
+    }),
+    [brightnessHeight, brightnessNode],
+  );
+  const previewSourceLabel = previewConnection
+    ? getGraphNodeLabel(previewConnection.fromNodeId)
+    : null;
+  const brightnessSourceLabel = brightnessInputConnection
+    ? getGraphNodeLabel(brightnessInputConnection.fromNodeId)
+    : null;
+  const brightnessSourceCanvas = useMemo(
+    () =>
+      brightnessInputConnection
+        ? nodeOutputCanvasesRef.current[brightnessInputConnection.fromNodeId] ??
+          null
+        : null,
+    [brightnessInputConnection, outputSurfaceVersion],
+  );
+  const brightnessOutputCanvas = useMemo(
+    () => nodeOutputCanvasesRef.current[BRIGHTNESS_GRAPH_NODE_ID] ?? null,
+    [outputSurfaceVersion],
   );
   const previewSourceCanvas = useMemo(
     () =>
-      previewSourceId !== null
-        ? nodeOutputCanvasesRef.current[previewSourceId] ?? null
+      previewConnection
+        ? nodeOutputCanvasesRef.current[previewConnection.fromNodeId] ?? null
         : null,
-    [outputSurfaceVersion, previewSourceId],
+    [outputSurfaceVersion, previewConnection],
   );
   const previewNodeZIndex = useMemo(
     () => Math.max(...images.map((item) => item.z), 0) + 1,
     [images],
   );
+
+  const getGraphNodeOutputAnchor = (nodeId: string) => {
+    const mediaId = parseMediaGraphNodeId(nodeId);
+    if (mediaId !== null) {
+      const sourceEntry = displayNodeById.get(mediaId);
+      if (!sourceEntry || sourceEntry.image.mediaKind === "note") {
+        return null;
+      }
+
+      return {
+        x: sourceEntry.displayX + sourceEntry.displayWidth + 12 + WORLD_ORIGIN,
+        y:
+          sourceEntry.displayY +
+          getItemHeight(sourceEntry.image) * 0.5 +
+          WORLD_ORIGIN,
+      };
+    }
+
+    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
+      return {
+        x: brightnessNode.x + brightnessNode.width + 12 + WORLD_ORIGIN,
+        y: brightnessNode.y + brightnessHeight * 0.5 + WORLD_ORIGIN,
+      };
+    }
+
+    return null;
+  };
+
+  const getGraphNodeInputAnchor = (nodeId: string, portId: string) => {
+    if (
+      nodeId === BRIGHTNESS_GRAPH_NODE_ID &&
+      portId === BRIGHTNESS_INPUT_PORT_ID
+    ) {
+      return {
+        x: brightnessNode.x - 12 + WORLD_ORIGIN,
+        y: brightnessNode.y + brightnessHeight * 0.5 + WORLD_ORIGIN,
+      };
+    }
+
+    if (nodeId === PREVIEW_GRAPH_NODE_ID && portId === PREVIEW_INPUT_PORT_ID) {
+      return {
+        x: previewNode.x - 12 + WORLD_ORIGIN,
+        y: previewNode.y + previewHeight * 0.5 + WORLD_ORIGIN,
+      };
+    }
+
+    return null;
+  };
+
+  const getDropTargetForPoint = (
+    point: { x: number; y: number },
+    sourceNodeId: string,
+  ) => {
+    if (
+      sourceNodeId !== BRIGHTNESS_GRAPH_NODE_ID &&
+      brightnessNodeDefinition?.inputs.some(
+        (port) =>
+          port.id === BRIGHTNESS_INPUT_PORT_ID && port.kind === "texture",
+      ) &&
+      point.x >= brightnessBounds.left &&
+      point.x <= brightnessBounds.right &&
+      point.y >= brightnessBounds.top &&
+      point.y <= brightnessBounds.bottom
+    ) {
+      return {
+        nodeId: BRIGHTNESS_GRAPH_NODE_ID,
+        portId: BRIGHTNESS_INPUT_PORT_ID,
+      };
+    }
+
+    if (
+      sourceNodeId !== PREVIEW_GRAPH_NODE_ID &&
+      previewNodeDefinition?.inputs.some(
+        (port) => port.id === PREVIEW_INPUT_PORT_ID && port.kind === "texture",
+      ) &&
+      point.x >= previewBounds.left &&
+      point.x <= previewBounds.right &&
+      point.y >= previewBounds.top &&
+      point.y <= previewBounds.bottom
+    ) {
+      return {
+        nodeId: PREVIEW_GRAPH_NODE_ID,
+        portId: PREVIEW_INPUT_PORT_ID,
+      };
+    }
+
+    return null;
+  };
+
+  const activeWireDropTarget = useMemo(
+    () =>
+      wireDraft
+        ? getDropTargetForPoint(
+            { x: wireDraft.pointerX, y: wireDraft.pointerY },
+            wireDraft.sourceNodeId,
+          )
+        : null,
+    [
+      brightnessBounds,
+      brightnessNodeDefinition,
+      previewBounds,
+      previewNodeDefinition,
+      wireDraft,
+    ],
+  );
+
   const wires = useMemo(() => {
     const nextWires: Array<{
       id: string;
@@ -552,56 +794,61 @@ function App() {
       endY: number;
       draft?: boolean;
     }> = [];
-    const previewInputX = previewNode.x - 12;
-    const previewInputY = previewNode.y + previewMediaHeight / 2;
 
-    if (previewSourceId !== null) {
-      const sourceEntry = displayNodeById.get(previewSourceId);
-      if (sourceEntry && sourceEntry.image.mediaKind !== "note") {
-        nextWires.push({
-          id: `preview-${previewSourceId}`,
-          startX: sourceEntry.displayX + sourceEntry.displayWidth + 12 + WORLD_ORIGIN,
-          startY:
-            sourceEntry.displayY +
-            sourceEntry.displayWidth * sourceEntry.image.aspect * 0.5 +
-            WORLD_ORIGIN,
-          endX: previewInputX + WORLD_ORIGIN,
-          endY: previewInputY + WORLD_ORIGIN,
-        });
+    for (const connection of connections) {
+      const start = getGraphNodeOutputAnchor(connection.fromNodeId);
+      const end = getGraphNodeInputAnchor(
+        connection.toNodeId,
+        connection.toPortId,
+      );
+      if (!start || !end) {
+        continue;
       }
+
+      nextWires.push({
+        id: connection.id,
+        startX: start.x,
+        startY: start.y,
+        endX: end.x,
+        endY: end.y,
+      });
     }
 
     if (wireDraft) {
-      const sourceEntry = displayNodeById.get(wireDraft.sourceId);
-      if (sourceEntry && sourceEntry.image.mediaKind !== "note") {
-        nextWires.push({
-          id: `draft-${wireDraft.sourceId}`,
-          startX: sourceEntry.displayX + sourceEntry.displayWidth + 12 + WORLD_ORIGIN,
-          startY:
-            sourceEntry.displayY +
-            sourceEntry.displayWidth * sourceEntry.image.aspect * 0.5 +
-            WORLD_ORIGIN,
-          endX: wireDraft.pointerX + WORLD_ORIGIN,
-          endY: wireDraft.pointerY + WORLD_ORIGIN,
-          draft: true,
-        });
+      const start = getGraphNodeOutputAnchor(wireDraft.sourceNodeId);
+      if (!start) {
+        return nextWires;
       }
+
+      nextWires.push({
+        id: `draft-${wireDraft.sourceNodeId}`,
+        startX: start.x,
+        startY: start.y,
+        endX: wireDraft.pointerX + WORLD_ORIGIN,
+        endY: wireDraft.pointerY + WORLD_ORIGIN,
+        draft: true,
+      });
     }
 
     return nextWires;
   }, [
+    brightnessHeight,
+    brightnessNode.width,
+    brightnessNode.x,
+    brightnessNode.y,
+    connections,
     displayNodeById,
-    previewMediaHeight,
+    previewHeight,
     previewNode.x,
     previewNode.y,
-    previewSourceId,
     wireDraft,
   ]);
 
-  const getConnectedOutputNodeIds = () =>
-    previewSourceId !== null ? [previewSourceId] : [];
-
-  const ensureNodeOutputCanvas = (nodeId: number, width: number, height: number) => {
+  const ensureNodeOutputCanvas = (
+    nodeId: string,
+    width: number,
+    height: number,
+  ) => {
     const nextWidth = Math.max(1, Math.round(width));
     const nextHeight = Math.max(1, Math.round(height));
     let canvas = nodeOutputCanvasesRef.current[nodeId];
@@ -626,7 +873,10 @@ function App() {
     return canvas;
   };
 
-  const renderNodeOutputSurface = (node: BoardImage) => {
+  const renderMediaNodeOutputSurface = (
+    graphNodeId: string,
+    node: BoardImage,
+  ) => {
     if (node.mediaKind === "note") {
       return false;
     }
@@ -653,7 +903,7 @@ function App() {
 
     const outputWidth = Math.max(1, Math.round(node.width));
     const outputHeight = Math.max(1, Math.round(node.width * node.aspect));
-    const canvas = ensureNodeOutputCanvas(node.id, outputWidth, outputHeight);
+    const canvas = ensureNodeOutputCanvas(graphNodeId, outputWidth, outputHeight);
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       return false;
@@ -663,7 +913,8 @@ function App() {
     const isMediaStack = (node.mediaItems?.length ?? 0) > 1;
     const shouldUseBlurBg =
       isMediaStack && node.mediaKind === "image" && !node.isGif;
-    const fitMode = isMediaStack && node.mediaKind === "image" ? "contain" : "cover";
+    const fitMode =
+      isMediaStack && node.mediaKind === "image" ? "contain" : "cover";
     const fitScale =
       fitMode === "contain"
         ? Math.min(outputWidth / sourceWidth, outputHeight / sourceHeight)
@@ -707,6 +958,99 @@ function App() {
     ctx.restore();
 
     return true;
+  };
+
+  const renderBrightnessNodeOutputSurface = (
+    graphNodeId: string,
+    sourceCanvas: HTMLCanvasElement,
+  ) => {
+    const canvas = ensureNodeOutputCanvas(
+      graphNodeId,
+      sourceCanvas.width,
+      sourceCanvas.height,
+    );
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return false;
+    }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.filter = `brightness(${brightnessValue.toFixed(2)})`;
+    ctx.drawImage(sourceCanvas, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    return true;
+  };
+
+  const renderGraphNodeOutputSurface = (
+    nodeId: string,
+    visited = new Set<string>(),
+  ): boolean => {
+    if (visited.has(nodeId)) {
+      return false;
+    }
+
+    visited.add(nodeId);
+
+    const mediaId = parseMediaGraphNodeId(nodeId);
+    if (mediaId !== null) {
+      const mediaNode = images.find(
+        (item) => item.id === mediaId && item.mediaKind !== "note",
+      );
+      return mediaNode ? renderMediaNodeOutputSurface(nodeId, mediaNode) : false;
+    }
+
+    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
+      const inputConnection = resolveInputConnection(
+        connections,
+        BRIGHTNESS_GRAPH_NODE_ID,
+        BRIGHTNESS_INPUT_PORT_ID,
+      );
+      if (!inputConnection) {
+        return false;
+      }
+
+      renderGraphNodeOutputSurface(inputConnection.fromNodeId, visited);
+      const sourceCanvas =
+        nodeOutputCanvasesRef.current[inputConnection.fromNodeId] ?? null;
+      return sourceCanvas
+        ? renderBrightnessNodeOutputSurface(nodeId, sourceCanvas)
+        : false;
+    }
+
+    return false;
+  };
+
+  const graphNodeUsesAnimation = (
+    nodeId: string,
+    visited = new Set<string>(),
+  ): boolean => {
+    if (visited.has(nodeId)) {
+      return false;
+    }
+
+    visited.add(nodeId);
+
+    const mediaId = parseMediaGraphNodeId(nodeId);
+    if (mediaId !== null) {
+      const mediaNode = images.find(
+        (item) => item.id === mediaId && item.mediaKind !== "note",
+      );
+      return Boolean(
+        mediaNode &&
+          (mediaNode.mediaKind === "video" ||
+            (mediaNode.isGif && !mediaNode.paused)),
+      );
+    }
+
+    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
+      return brightnessInputConnection
+        ? graphNodeUsesAnimation(brightnessInputConnection.fromNodeId, visited)
+        : false;
+    }
+
+    return false;
   };
 
   const updateSelectedNodeTransform = (
@@ -769,8 +1113,8 @@ function App() {
     setGifSeekFrames({});
     setBrokenMediaIds({});
     setContextMenu(null);
-    setPreviewDrag(null);
-    setPreviewSourceId(null);
+    setConnections([]);
+    setFloatingNodeDrag(null);
     setWireDraft(null);
   };
 
@@ -2243,29 +2587,45 @@ function App() {
   }, [activeFrames, selectedFrameId]);
 
   useEffect(() => {
-    if (previewSourceId === null) {
-      return;
-    }
-
-    const previewSourceStillExists = images.some(
-      (item) => item.id === previewSourceId && item.mediaKind !== "note",
+    const validMediaNodeIds = new Set(
+      images
+        .filter((item) => item.mediaKind !== "note")
+        .map((item) => getMediaGraphNodeId(item.id)),
     );
-    if (!previewSourceStillExists) {
-      setPreviewSourceId(null);
-    }
-  }, [images, previewSourceId]);
+    const validOutputNodeIds = new Set<string>([
+      ...validMediaNodeIds,
+      BRIGHTNESS_GRAPH_NODE_ID,
+    ]);
+    const validInputNodeIds = new Set<string>([
+      BRIGHTNESS_GRAPH_NODE_ID,
+      PREVIEW_GRAPH_NODE_ID,
+    ]);
+
+    setConnections((current) =>
+      current.filter(
+        (connection) =>
+          validOutputNodeIds.has(connection.fromNodeId) &&
+          validInputNodeIds.has(connection.toNodeId) &&
+          connection.fromNodeId !== connection.toNodeId,
+      ),
+    );
+  }, [images]);
 
   useEffect(() => {
-    const validIds = new Set(images.map((item) => item.id));
+    const validIds = new Set<string>([
+      ...images
+        .filter((item) => item.mediaKind !== "note")
+        .map((item) => getMediaGraphNodeId(item.id)),
+      BRIGHTNESS_GRAPH_NODE_ID,
+    ]);
     let didChange = false;
 
     for (const key of Object.keys(nodeOutputCanvasesRef.current)) {
-      const id = Number(key);
-      if (validIds.has(id)) {
+      if (validIds.has(key)) {
         continue;
       }
 
-      delete nodeOutputCanvasesRef.current[id];
+      delete nodeOutputCanvasesRef.current[key];
       didChange = true;
     }
 
@@ -2275,8 +2635,7 @@ function App() {
   }, [images]);
 
   useEffect(() => {
-    const connectedNodeIds = getConnectedOutputNodeIds();
-    if (connectedNodeIds.length === 0) {
+    if (!previewConnection) {
       return;
     }
 
@@ -2284,24 +2643,9 @@ function App() {
     let cancelled = false;
 
     const renderOutputs = () => {
-      let shouldAnimate = false;
-
-      for (const nodeId of connectedNodeIds) {
-        const node = images.find(
-          (item) => item.id === nodeId && item.mediaKind !== "note",
-        );
-        if (!node) {
-          continue;
-        }
-
-        const rendered = renderNodeOutputSurface(node);
-        if (
-          rendered &&
-          (node.mediaKind === "video" || (node.isGif && !node.paused))
-        ) {
-          shouldAnimate = true;
-        }
-      }
+      const rendered = renderGraphNodeOutputSurface(previewConnection.fromNodeId);
+      const shouldAnimate =
+        rendered && graphNodeUsesAnimation(previewConnection.fromNodeId);
 
       if (!cancelled && shouldAnimate) {
         frameId = window.requestAnimationFrame(renderOutputs);
@@ -2314,7 +2658,14 @@ function App() {
       cancelled = true;
       window.cancelAnimationFrame(frameId);
     };
-  }, [images, previewSourceId, activeMediaTransforms]);
+  }, [
+    activeMediaTransforms,
+    brightnessInputConnection,
+    brightnessValue,
+    connections,
+    images,
+    previewConnection,
+  ]);
 
   useEffect(() => {
     const activeGroupIds = selectedIds.filter((id) =>
@@ -3231,7 +3582,11 @@ function App() {
     });
   };
 
-  const onOutputPointerDown = (event: ReactPointerEvent, id: number) => {
+  const startWireDrag = (
+    event: ReactPointerEvent,
+    sourceNodeId: string,
+    sourcePortId: string,
+  ) => {
     if (event.button !== 0) {
       return;
     }
@@ -3240,25 +3595,60 @@ function App() {
     event.stopPropagation();
 
     const point = getBoardPointer(event);
-    const sourceNode = images.find(
-      (item) => item.id === id && item.mediaKind !== "note",
-    );
-    if (!point || !sourceNode) {
+    if (!point) {
       return;
     }
 
     closeContextMenu();
-    setSelectedFrameId(null);
-    setSelectedId(id);
-    setSelectedIds([id]);
-    setPreviewDrag(null);
+    setFloatingNodeDrag(null);
     setWireDraft({
-      sourceId: id,
+      sourceNodeId,
+      sourcePortId,
+      kind: "texture",
       pointerX: point.x,
       pointerY: point.y,
     });
 
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  };
+
+  const onOutputPointerDown = (event: ReactPointerEvent, id: number) => {
+    if (
+      !mediaNodeDefinition?.outputs.some((port) => port.id === MEDIA_OUTPUT_PORT_ID)
+    ) {
+      return;
+    }
+
+    const sourceNode = images.find(
+      (item) => item.id === id && item.mediaKind !== "note",
+    );
+    if (!sourceNode) {
+      return;
+    }
+
+    setSelectedFrameId(null);
+    setSelectedId(id);
+    setSelectedIds([id]);
+    startWireDrag(event, getMediaGraphNodeId(id), MEDIA_OUTPUT_PORT_ID);
+  };
+
+  const onBrightnessOutputPointerDown = (event: ReactPointerEvent) => {
+    if (
+      !brightnessNodeDefinition?.outputs.some(
+        (port) => port.id === BRIGHTNESS_OUTPUT_PORT_ID,
+      )
+    ) {
+      return;
+    }
+
+    setSelectedFrameId(null);
+    setSelectedId(null);
+    setSelectedIds([]);
+    startWireDrag(
+      event,
+      BRIGHTNESS_GRAPH_NODE_ID,
+      BRIGHTNESS_OUTPUT_PORT_ID,
+    );
   };
 
   const onPreviewNodePointerDown = (event: ReactPointerEvent) => {
@@ -3275,9 +3665,34 @@ function App() {
     }
 
     closeContextMenu();
-    setPreviewDrag({
+    setFloatingNodeDrag({
+      nodeId: PREVIEW_GRAPH_NODE_ID,
       offsetX: point.x - previewNode.x,
       offsetY: point.y - previewNode.y,
+    });
+    setWireDraft(null);
+
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  };
+
+  const onBrightnessNodePointerDown = (event: ReactPointerEvent) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const point = getBoardPointer(event);
+    if (!point) {
+      return;
+    }
+
+    closeContextMenu();
+    setFloatingNodeDrag({
+      nodeId: BRIGHTNESS_GRAPH_NODE_ID,
+      offsetX: point.x - brightnessNode.x,
+      offsetY: point.y - brightnessNode.y,
     });
     setWireDraft(null);
 
@@ -3524,12 +3939,20 @@ function App() {
       return;
     }
 
-    if (previewDrag) {
-      setPreviewNode((current) => ({
-        ...current,
-        x: point.x - previewDrag.offsetX,
-        y: point.y - previewDrag.offsetY,
-      }));
+    if (floatingNodeDrag) {
+      if (floatingNodeDrag.nodeId === PREVIEW_GRAPH_NODE_ID) {
+        setPreviewNode((current) => ({
+          ...current,
+          x: point.x - floatingNodeDrag.offsetX,
+          y: point.y - floatingNodeDrag.offsetY,
+        }));
+      } else if (floatingNodeDrag.nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
+        setBrightnessNode((current) => ({
+          ...current,
+          x: point.x - floatingNodeDrag.offsetX,
+          y: point.y - floatingNodeDrag.offsetY,
+        }));
+      }
       return;
     }
 
@@ -3848,23 +4271,37 @@ function App() {
         event !== undefined
           ? getBoardPointFromClient(event.clientX, event.clientY)
           : null;
-      const droppedOnPreview =
-        point !== null &&
-        point.x >= previewBounds.left &&
-        point.x <= previewBounds.right &&
-        point.y >= previewBounds.top &&
-        point.y <= previewBounds.bottom;
+      const dropTarget =
+        point !== null
+          ? getDropTargetForPoint(point, wireDraft.sourceNodeId)
+          : null;
 
-      if (droppedOnPreview) {
-        setPreviewSourceId(wireDraft.sourceId);
+      if (dropTarget) {
+        setConnections((current) => [
+          ...current.filter(
+            (connection) =>
+              !(
+                connection.toNodeId === dropTarget.nodeId &&
+                connection.toPortId === dropTarget.portId
+              ),
+          ),
+          {
+            id: `c${nextConnectionIdRef.current++}`,
+            fromNodeId: wireDraft.sourceNodeId,
+            fromPortId: wireDraft.sourcePortId,
+            toNodeId: dropTarget.nodeId,
+            toPortId: dropTarget.portId,
+            kind: wireDraft.kind,
+          },
+        ]);
       }
 
       setWireDraft(null);
       return;
     }
 
-    if (previewDrag) {
-      setPreviewDrag(null);
+    if (floatingNodeDrag) {
+      setFloatingNodeDrag(null);
       return;
     }
 
@@ -4043,7 +4480,7 @@ function App() {
     setInteraction(null);
     setPan(null);
     setMarquee(null);
-    setPreviewDrag(null);
+    setFloatingNodeDrag(null);
   };
 
   const clearBoard = () => {
@@ -4294,15 +4731,38 @@ function App() {
             })()
           ))}
 
+          <BrightnessNode
+            x={brightnessNode.x}
+            y={brightnessNode.y}
+            width={brightnessNode.width}
+            bodyHeight={BRIGHTNESS_NODE_BODY_HEIGHT}
+            zIndex={previewNodeZIndex}
+            brightness={brightnessValue}
+            sourceLabel={brightnessSourceLabel}
+            sourceCanvas={brightnessSourceCanvas}
+            outputCanvas={brightnessOutputCanvas}
+            inputConnected={Boolean(brightnessInputConnection)}
+            outputConnected={connections.some(
+              (connection) =>
+                connection.fromNodeId === BRIGHTNESS_GRAPH_NODE_ID &&
+                connection.fromPortId === BRIGHTNESS_OUTPUT_PORT_ID,
+            )}
+            isDropTarget={activeWireDropTarget?.nodeId === BRIGHTNESS_GRAPH_NODE_ID}
+            onPointerDown={onBrightnessNodePointerDown}
+            onOutputPointerDown={onBrightnessOutputPointerDown}
+            onBrightnessChange={setBrightnessValue}
+          />
+
           <PreviewNode
             x={previewNode.x}
             y={previewNode.y}
             width={previewNode.width}
             aspect={previewAspect}
             zIndex={previewNodeZIndex}
-            sourceImage={previewSource}
+            hasInput={Boolean(previewConnection)}
+            sourceLabel={previewSourceLabel}
             sourceCanvas={previewSourceCanvas}
-            isDropTarget={Boolean(wireDraft)}
+            isDropTarget={activeWireDropTarget?.nodeId === PREVIEW_GRAPH_NODE_ID}
             onPointerDown={onPreviewNodePointerDown}
           />
 
@@ -4315,7 +4775,11 @@ function App() {
                 displayX={displayX}
                 displayY={displayY}
                 displayWidth={displayWidth}
-                outputConnected={previewSourceId === image.id}
+                outputConnected={connections.some(
+                  (connection) =>
+                    connection.fromNodeId === getMediaGraphNodeId(image.id) &&
+                    connection.fromPortId === MEDIA_OUTPUT_PORT_ID,
+                )}
                 broken={Boolean(activeBrokenMediaIds[image.id])}
                 mediaTransformCss={getTransformCss(
                   getMediaTransformForNode(image.id),
@@ -4403,7 +4867,7 @@ function App() {
                     (item) => item.id === id && item.mediaKind !== "note",
                   );
                   if (outputNode) {
-                    renderNodeOutputSurface(outputNode);
+                    renderGraphNodeOutputSurface(getMediaGraphNodeId(id));
                   }
 
                   const nextAspect = videoEl.videoHeight / videoEl.videoWidth;
@@ -4468,7 +4932,7 @@ function App() {
                     (item) => item.id === id && item.mediaKind !== "note",
                   );
                   if (outputNode) {
-                    renderNodeOutputSurface(outputNode);
+                    renderGraphNodeOutputSurface(getMediaGraphNodeId(id));
                   }
                 }}
                 onMediaError={(id) => {
@@ -4494,7 +4958,7 @@ function App() {
                     (item) => item.id === id && item.mediaKind !== "note",
                   );
                   if (outputNode) {
-                    renderNodeOutputSurface(outputNode);
+                    renderGraphNodeOutputSurface(getMediaGraphNodeId(id));
                   }
 
                   const nextAspect = imgEl.naturalHeight / imgEl.naturalWidth;
@@ -4560,7 +5024,7 @@ function App() {
                     (item) => item.id === id && item.mediaKind !== "note",
                   );
                   if (outputNode) {
-                    renderNodeOutputSurface(outputNode);
+                    renderGraphNodeOutputSurface(getMediaGraphNodeId(id));
                   }
                 }}
                 onSeekGif={onGifSeek}

@@ -32,6 +32,7 @@ The dev server uses Vite. By default it runs locally and supports hot reload.
 Relevant project docs:
 
 - [Shader render pipeline](./docs/shader-render-pipeline.md)
+- [Node graph roadmap](./docs/node-graph-roadmap.md)
 
 Add to this list as more focused docs are created.
 
