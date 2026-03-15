@@ -12,9 +12,19 @@ type SnapshotMedia = {
   sourceUrl?: string;
 };
 
-type SnapshotMediaNode = Pick<
+type LegacySnapshotMediaNode = Pick<
   BoardImage,
   "id" | "graphNodeId" | "paused" | "x" | "y" | "width" | "aspect" | "z"
+> & {
+  kind: "media";
+  mediaIds: string[];
+  activeMediaIndex: number;
+  slideshowPlaying?: boolean;
+};
+
+type SnapshotMediaNode = Pick<
+  BoardImage,
+  "id" | "graphNodeId" | "paused" | "aspect"
 > & {
   kind: "media";
   mediaIds: string[];
@@ -32,7 +42,7 @@ type SnapshotNoteNode = Pick<
   noteMode: "editing" | "viewing";
 };
 
-type SnapshotNode = SnapshotMediaNode | SnapshotNoteNode;
+type SnapshotNode = LegacySnapshotMediaNode | SnapshotNoteNode;
 
 type PersistedGroup = {
   id: number;
@@ -102,6 +112,18 @@ type BoardSnapshotV7 = {
   darkMode: boolean;
 };
 
+type BoardSnapshotV8 = {
+  version: 8;
+  createdAt: string;
+  media: Record<string, SnapshotMedia>;
+  nodes: Array<SnapshotMediaNode | SnapshotNoteNode>;
+  frames: SnapshotFrameNode[];
+  graphNodes: SnapshotGraphNode[];
+  connections: SnapshotConnection[];
+  mediaTransforms: Record<number, MediaTransformSettings>;
+  darkMode: boolean;
+};
+
 export type ParsedSnapshot = {
   darkMode: boolean;
   loadedFrames: BoardFrame[];
@@ -143,7 +165,7 @@ const buildSnapshotNode = (
   image: BoardImage,
   media: Record<string, SnapshotMedia>,
   mediaIdBySignature: Map<string, string>,
-): SnapshotNode => {
+): SnapshotMediaNode | SnapshotNoteNode => {
   if (image.mediaKind === "note") {
     return {
       kind: "note",
@@ -192,11 +214,7 @@ const buildSnapshotNode = (
     ),
     slideshowPlaying: Boolean(image.slideshowPlaying),
     paused: image.paused,
-    x: image.x,
-    y: image.y,
-    width: image.width,
     aspect: image.aspect,
-    z: image.z,
   };
 };
 
@@ -255,21 +273,24 @@ const parseMediaEntry = (
 };
 
 const parseSnapshotNode = (
-  node: SnapshotNode,
+  node: SnapshotNode | SnapshotMediaNode,
   mediaMap: Record<string, Partial<SnapshotMedia>>,
+  graphNodeById: Map<string, GraphNodeInstance>,
 ): BoardImage | null => {
-  if (
-    typeof node?.id !== "number" ||
-    typeof node?.x !== "number" ||
-    typeof node?.y !== "number" ||
-    typeof node?.width !== "number" ||
-    typeof node?.aspect !== "number" ||
-    typeof node?.z !== "number"
-  ) {
+  if (typeof node?.id !== "number") {
     return null;
   }
 
   if (node.kind === "note") {
+    if (
+      typeof node?.x !== "number" ||
+      typeof node?.y !== "number" ||
+      typeof node?.width !== "number" ||
+      typeof node?.aspect !== "number" ||
+      typeof node?.z !== "number"
+    ) {
+      return null;
+    }
     if (typeof node.name !== "string" || typeof node.noteMarkdown !== "string") {
       return null;
     }
@@ -311,11 +332,28 @@ const parseSnapshotNode = (
     Math.min(node.activeMediaIndex ?? 0, mediaItems.length - 1),
   );
   const activeMedia = mediaItems[activeMediaIndex];
+  const graphNodeId =
+    typeof node.graphNodeId === "string" ? node.graphNodeId : undefined;
+  const graphNode = graphNodeId ? graphNodeById.get(graphNodeId) ?? null : null;
+  const legacyNode = node as Partial<LegacySnapshotMediaNode>;
+  const x =
+    graphNode?.x ?? (typeof legacyNode.x === "number" ? legacyNode.x : 0);
+  const y =
+    graphNode?.y ?? (typeof legacyNode.y === "number" ? legacyNode.y : 0);
+  const width = Math.max(
+    MIN_IMAGE_WIDTH,
+    graphNode?.width ??
+      (typeof legacyNode.width === "number" ? legacyNode.width : MIN_IMAGE_WIDTH),
+  );
+  const z =
+    graphNode?.z ?? (typeof legacyNode.z === "number" ? legacyNode.z : 0);
+  if (typeof node.aspect !== "number") {
+    return null;
+  }
 
   return {
     id: node.id,
-    graphNodeId:
-      typeof node.graphNodeId === "string" ? node.graphNodeId : undefined,
+    graphNodeId,
     src: activeMedia.src,
     sourceDataUrl: activeMedia.sourceDataUrl,
     sourceUrl: activeMedia.sourceUrl,
@@ -326,11 +364,11 @@ const parseSnapshotNode = (
     activeMediaIndex,
     slideshowPlaying: Boolean(node.slideshowPlaying),
     paused: Boolean(node.paused),
-    x: node.x,
-    y: node.y,
-    width: Math.max(MIN_IMAGE_WIDTH, node.width),
+    x,
+    y,
+    width,
     aspect: node.aspect > 0 ? node.aspect : 1,
-    z: node.z,
+    z,
   };
 };
 
@@ -528,12 +566,12 @@ export const buildSnapshot = (
   connections: GraphConnection[],
   mediaTransforms: Record<number, MediaTransformSettings>,
   darkMode: boolean,
-): BoardSnapshotV7 => {
+): BoardSnapshotV8 => {
   const media: Record<string, SnapshotMedia> = {};
   const mediaIdBySignature = new Map<string, string>();
 
   return {
-    version: 7,
+    version: 8,
     createdAt: new Date().toISOString(),
     media,
     nodes: images.map((image) => buildSnapshotNode(image, media, mediaIdBySignature)),
@@ -550,7 +588,8 @@ export const parseSnapshot = (text: string): ParsedSnapshot => {
     | Partial<BoardSnapshotV4>
     | Partial<BoardSnapshotV5>
     | Partial<BoardSnapshotV6>
-    | Partial<BoardSnapshotV7>;
+    | Partial<BoardSnapshotV7>
+    | Partial<BoardSnapshotV8>;
 
   if (
     !parsed ||
@@ -559,18 +598,13 @@ export const parseSnapshot = (text: string): ParsedSnapshot => {
     (parsed.version !== 4 &&
       parsed.version !== 5 &&
       parsed.version !== 6 &&
-      parsed.version !== 7)
+      parsed.version !== 7 &&
+      parsed.version !== 8)
   ) {
     throw new Error("Unsupported snapshot format");
   }
 
   const mediaMap = parsed.media as Record<string, Partial<SnapshotMedia>>;
-  const loadedImages = (parsed.nodes as SnapshotNode[])
-    .map((node) => parseSnapshotNode(node, mediaMap))
-    .filter((item): item is BoardImage => item !== null);
-
-  const validIds = new Set(loadedImages.map((item) => item.id));
-  const maxImageZ = loadedImages.reduce((max, item) => Math.max(max, item.z), 0);
   const parsedFrames = "frames" in parsed ? parsed.frames : undefined;
   const parsedGroups = "groups" in parsed ? parsed.groups : undefined;
   const parsedGraphNodes = "graphNodes" in parsed ? parsed.graphNodes : undefined;
@@ -578,7 +612,24 @@ export const parseSnapshot = (text: string): ParsedSnapshot => {
     "connections" in parsed ? parsed.connections : undefined;
   const parsedMediaTransforms =
     "mediaTransforms" in parsed ? parsed.mediaTransforms : undefined;
+  const loadedGraphNodes = Array.isArray(parsedGraphNodes)
+    ? parsedGraphNodes
+        .map((graphNode: Partial<SnapshotGraphNode>) =>
+          parseSnapshotGraphNode(graphNode),
+        )
+        .filter((graphNode): graphNode is GraphNodeInstance => graphNode !== null)
+    : [];
+  const graphNodeById = new Map(
+    loadedGraphNodes.map((graphNode) => [graphNode.id, graphNode]),
+  );
+  const loadedImages = (
+    parsed.nodes as Array<SnapshotNode | SnapshotMediaNode>
+  )
+    .map((node) => parseSnapshotNode(node, mediaMap, graphNodeById))
+    .filter((item): item is BoardImage => item !== null);
 
+  const validIds = new Set(loadedImages.map((item) => item.id));
+  const maxImageZ = loadedImages.reduce((max, item) => Math.max(max, item.z), 0);
   const loadedFrames = Array.isArray(parsedFrames)
     ? parsedFrames
         .map((frame: SnapshotFrameNode) => parseSnapshotFrame(frame, validIds))
@@ -592,13 +643,6 @@ export const parseSnapshot = (text: string): ParsedSnapshot => {
       : [];
 
   const loadedMediaTransforms = parseMediaTransforms(parsedMediaTransforms, validIds);
-  const loadedGraphNodes = Array.isArray(parsedGraphNodes)
-    ? parsedGraphNodes
-        .map((graphNode: Partial<SnapshotGraphNode>) =>
-          parseSnapshotGraphNode(graphNode),
-        )
-        .filter((graphNode): graphNode is GraphNodeInstance => graphNode !== null)
-    : [];
   const validGraphNodeIds = new Set(loadedGraphNodes.map((graphNode) => graphNode.id));
   const validOutputNodeIds = new Set<string>([
     ...loadedImages.map((item) =>
@@ -641,6 +685,10 @@ export const parseSnapshot = (text: string): ParsedSnapshot => {
     nextZ:
       Math.max(
         maxImageZ,
+        loadedGraphNodes.reduce(
+          (max, graphNode) => Math.max(max, graphNode.z),
+          0,
+        ),
         loadedFrames.reduce(
           (max: number, frame: BoardFrame) => Math.max(max, frame.z),
           0,
