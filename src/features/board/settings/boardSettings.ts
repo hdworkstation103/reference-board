@@ -7,6 +7,11 @@ import {
   type SettingPrimitive,
   type SettingsSectionDefinition,
 } from "./store";
+import {
+  BACKGROUND_SHADER_OPTIONS,
+  DEFAULT_BACKGROUND_SHADER_ID,
+  getBackgroundShaderOption,
+} from "../shaders";
 
 export type BoardSettingDefinition = SettingDefinition;
 export type BoardSettingValue = SettingPrimitive;
@@ -15,6 +20,17 @@ export type BoardSettingsSectionDefinition = SettingsSectionDefinition;
 export const boardSettingsStore = createSettingsStore({
   storageKey: "reference-board-settings",
 });
+
+const getInitialBackgroundShaderId = () => {
+  if (typeof window === "undefined") {
+    return DEFAULT_BACKGROUND_SHADER_ID;
+  }
+
+  return getBackgroundShaderOption(
+    window.localStorage.getItem("reference-board-background-shader") ??
+      DEFAULT_BACKGROUND_SHADER_ID,
+  ).id;
+};
 
 const BOARD_SETTINGS_SECTIONS: BoardSettingsSectionDefinition[] = [
   {
@@ -64,6 +80,19 @@ const BOARD_SETTINGS: BoardSettingDefinition[] = [
     label: "Shader compositing",
     description: "Blend shader overlays into media previews and selection treatments.",
     defaultValue: true,
+  },
+  {
+    id: "rendering.backgroundShader",
+    kind: "select",
+    section: "rendering",
+    order: 2,
+    label: "Background shader",
+    description: "Choose the animated shader used behind the board.",
+    defaultValue: getInitialBackgroundShaderId(),
+    options: BACKGROUND_SHADER_OPTIONS.map((option) => ({
+      label: option.label,
+      value: option.id,
+    })),
   },
   {
     id: "workspace.inspectorWidth",

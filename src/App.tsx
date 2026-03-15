@@ -11,7 +11,6 @@ import type { CSSProperties } from "react";
 import {
   AppToolbar,
   applyActiveMediaFromItems,
-  BACKGROUND_SHADER_OPTIONS,
   BoardNode,
   BoardViewport,
   boardSettingsStore,
@@ -111,7 +110,8 @@ const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
 const BOARD_PERSISTENCE_DEBOUNCE_MS = 150;
 const DARK_MODE_SETTING_ID = "appearance.darkMode";
 const SELECTION_SHADER_SETTING_ID = "rendering.selectionShader";
-const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
+  const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
+const BACKGROUND_SHADER_SETTING_ID = "rendering.backgroundShader";
 const INSPECTOR_WIDTH_SETTING_ID = "workspace.inspectorWidth";
 const SHADER_SANDBOX_SETTING_ID = "workspace.shaderSandbox";
 
@@ -122,6 +122,11 @@ function App() {
     boardSettings.values[SELECTION_SHADER_SETTING_ID] !== false;
   const shaderCompositingEnabled =
     boardSettings.values[SHADER_COMPOSITING_SETTING_ID] !== false;
+  const backgroundShaderId = getBackgroundShaderOption(
+    typeof boardSettings.values[BACKGROUND_SHADER_SETTING_ID] === "string"
+      ? boardSettings.values[BACKGROUND_SHADER_SETTING_ID]
+      : DEFAULT_BACKGROUND_SHADER_ID,
+  ).id;
   const inspectorWidth =
     typeof boardSettings.values[INSPECTOR_WIDTH_SETTING_ID] === "number"
       ? boardSettings.values[INSPECTOR_WIDTH_SETTING_ID]
@@ -163,12 +168,6 @@ function App() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [settingsPopoverOpen, setSettingsPopoverOpen] = useState(false);
-  const [backgroundShaderId, setBackgroundShaderId] = useState(() =>
-    getBackgroundShaderOption(
-      window.localStorage.getItem("reference-board-background-shader") ??
-        DEFAULT_BACKGROUND_SHADER_ID,
-    ).id,
-  );
   const [inspectorResize, setInspectorResize] = useState<{
     startX: number;
     startWidth: number;
@@ -1245,13 +1244,6 @@ function App() {
       applyMoveMode();
     }
   };
-
-  useEffect(() => {
-    window.localStorage.setItem(
-      "reference-board-background-shader",
-      backgroundShader.id,
-    );
-  }, [backgroundShader.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3630,8 +3622,7 @@ function App() {
       style={appShellStyle}
     >
       <AppToolbar
-        backgroundShaderOptions={BACKGROUND_SHADER_OPTIONS}
-        currentBackgroundShaderId={backgroundShader.id}
+        currentBackgroundLabel={backgroundShader.label}
         darkMode={darkMode}
         imageCount={images.length}
         enableSelectionShader={enableSelectionShader}
@@ -3650,7 +3641,6 @@ function App() {
         onOpenSettings={() => {
           setSettingsPopoverOpen(true);
         }}
-        onSelectBackgroundShader={setBackgroundShaderId}
         onToggleDarkMode={() => {
           toggleBoardSettingValue(DARK_MODE_SETTING_ID);
         }}

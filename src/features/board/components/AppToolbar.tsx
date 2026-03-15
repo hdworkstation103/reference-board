@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { BackgroundShaderOption } from "../shaders";
 
 type AppToolbarProps = {
-  backgroundShaderOptions: readonly BackgroundShaderOption[];
-  currentBackgroundShaderId: string;
+  currentBackgroundLabel: string;
   darkMode: boolean;
   imageCount: number;
   enableSelectionShader: boolean;
@@ -16,15 +14,13 @@ type AppToolbarProps = {
   onCenterView: () => void;
   onClearBoard: () => void;
   onOpenSettings: () => void;
-  onSelectBackgroundShader: (id: string) => void;
   onToggleDarkMode: () => void;
   onToggleShaderCompositing: () => void;
   onToggleShaderSandbox: () => void;
 };
 
 function AppToolbar({
-  backgroundShaderOptions,
-  currentBackgroundShaderId,
+  currentBackgroundLabel,
   darkMode,
   imageCount,
   enableSelectionShader,
@@ -37,13 +33,11 @@ function AppToolbar({
   onCenterView,
   onClearBoard,
   onOpenSettings,
-  onSelectBackgroundShader,
   onToggleDarkMode,
   onToggleShaderCompositing,
   onToggleShaderSandbox,
 }: AppToolbarProps) {
   const [openMenu, setOpenMenu] = useState<"file" | "view" | null>(null);
-  const [openSubmenu, setOpenSubmenu] = useState<"bg-shaders" | null>(null);
   const navRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -55,13 +49,11 @@ function AppToolbar({
       if (navRef.current?.contains(event.target as Node)) {
         return;
       }
-      setOpenSubmenu(null);
       setOpenMenu(null);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setOpenSubmenu(null);
         setOpenMenu(null);
       }
     };
@@ -73,10 +65,6 @@ function AppToolbar({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [openMenu]);
-
-  const currentBackgroundLabel =
-    backgroundShaderOptions.find((option) => option.id === currentBackgroundShaderId)
-      ?.label ?? "Unknown";
 
   return (
     <header className="toolbar">
@@ -112,7 +100,6 @@ function AppToolbar({
             aria-expanded={openMenu === "file"}
             aria-haspopup="menu"
             onClick={() => {
-              setOpenSubmenu(null);
               setOpenMenu((current) => (current === "file" ? null : "file"));
             }}
           >
@@ -133,7 +120,6 @@ function AppToolbar({
                 type="button"
                 className="menu-item"
                 onClick={() => {
-                  setOpenSubmenu(null);
                   setOpenMenu(null);
                   onOpenSettings();
                 }}
@@ -144,7 +130,6 @@ function AppToolbar({
                 type="button"
                 className="menu-item"
                 onClick={() => {
-                  setOpenSubmenu(null);
                   setOpenMenu(null);
                   onAddNote();
                 }}
@@ -164,7 +149,6 @@ function AppToolbar({
                 type="button"
                 className="menu-item"
                 onClick={() => {
-                  setOpenSubmenu(null);
                   setOpenMenu(null);
                   onSaveVersion();
                 }}
@@ -175,7 +159,6 @@ function AppToolbar({
                 type="button"
                 className="menu-item danger"
                 onClick={() => {
-                  setOpenSubmenu(null);
                   setOpenMenu(null);
                   onClearBoard();
                 }}
@@ -193,13 +176,7 @@ function AppToolbar({
             aria-expanded={openMenu === "view"}
             aria-haspopup="menu"
             onClick={() => {
-              setOpenMenu((current) => {
-                const nextOpenMenu = current === "view" ? null : "view";
-                if (nextOpenMenu !== "view") {
-                  setOpenSubmenu(null);
-                }
-                return nextOpenMenu;
-              });
+              setOpenMenu((current) => (current === "view" ? null : "view"));
             }}
           >
             View
@@ -210,7 +187,6 @@ function AppToolbar({
                 type="button"
                 className="menu-item"
                 onClick={() => {
-                  setOpenSubmenu(null);
                   setOpenMenu(null);
                   onCenterView();
                 }}
@@ -221,7 +197,6 @@ function AppToolbar({
                 type="button"
                 className="menu-item"
                 onClick={() => {
-                  setOpenSubmenu(null);
                   setOpenMenu(null);
                   onToggleDarkMode();
                 }}
@@ -232,7 +207,6 @@ function AppToolbar({
                 type="button"
                 className="menu-item"
                 onClick={() => {
-                  setOpenSubmenu(null);
                   setOpenMenu(null);
                   onToggleShaderCompositing();
                 }}
@@ -241,53 +215,10 @@ function AppToolbar({
                   ? "Disable Shader Compositing"
                   : "Enable Shader Compositing"}
               </button>
-              <div
-                className={`menu-subgroup ${openSubmenu === "bg-shaders" ? "open" : ""}`}
-              >
-                <button
-                  type="button"
-                  className="menu-item menu-item-submenu-trigger"
-                  aria-expanded={openSubmenu === "bg-shaders"}
-                  aria-haspopup="menu"
-                  onClick={() => {
-                    setOpenSubmenu((current) =>
-                      current === "bg-shaders" ? null : "bg-shaders",
-                    );
-                  }}
-                >
-                  <span>Shaders (BG)</span>
-                  <span className="menu-item-hint">{currentBackgroundLabel}</span>
-                </button>
-                {openSubmenu === "bg-shaders" && (
-                  <div
-                    className="menu-panel menu-subpanel"
-                    role="menu"
-                    aria-label="Background shaders"
-                  >
-                    {backgroundShaderOptions.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        className="menu-item"
-                        onClick={() => {
-                          setOpenSubmenu(null);
-                          setOpenMenu(null);
-                          onSelectBackgroundShader(option.id);
-                        }}
-                      >
-                        {option.id === currentBackgroundShaderId
-                          ? `${option.label} [Current]`
-                          : option.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
               <button
                 type="button"
                 className="menu-item"
                 onClick={() => {
-                  setOpenSubmenu(null);
                   setOpenMenu(null);
                   onToggleShaderSandbox();
                 }}
