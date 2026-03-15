@@ -1,5 +1,5 @@
 import { MIN_IMAGE_WIDTH, NOTE_DEFAULT_ASPECT } from "../constants";
-import type { GraphConnection } from "../graph";
+import { getMediaGraphNodeId, type GraphConnection } from "../graph";
 import type { BoardFrame, BoardImage, MediaTransformSettings, NodeMediaItem } from "./board";
 import type { GraphNodeInstance, GraphNodeParamValue } from "./board";
 
@@ -14,7 +14,7 @@ type SnapshotMedia = {
 
 type SnapshotMediaNode = Pick<
   BoardImage,
-  "id" | "paused" | "x" | "y" | "width" | "aspect" | "z"
+  "id" | "graphNodeId" | "paused" | "x" | "y" | "width" | "aspect" | "z"
 > & {
   kind: "media";
   mediaIds: string[];
@@ -184,6 +184,7 @@ const buildSnapshotNode = (
   return {
     kind: "media",
     id: image.id,
+    graphNodeId: image.graphNodeId,
     mediaIds,
     activeMediaIndex: Math.max(
       0,
@@ -313,6 +314,8 @@ const parseSnapshotNode = (
 
   return {
     id: node.id,
+    graphNodeId:
+      typeof node.graphNodeId === "string" ? node.graphNodeId : undefined,
     src: activeMedia.src,
     sourceDataUrl: activeMedia.sourceDataUrl,
     sourceUrl: activeMedia.sourceUrl,
@@ -598,7 +601,9 @@ export const parseSnapshot = (text: string): ParsedSnapshot => {
     : [];
   const validGraphNodeIds = new Set(loadedGraphNodes.map((graphNode) => graphNode.id));
   const validOutputNodeIds = new Set<string>([
-    ...loadedImages.map((item) => `media:${item.id}`),
+    ...loadedImages.map((item) =>
+      item.graphNodeId ?? getMediaGraphNodeId(item.id),
+    ),
     ...validGraphNodeIds,
   ]);
   const loadedConnections = Array.isArray(parsedConnections)

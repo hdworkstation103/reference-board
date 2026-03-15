@@ -11,6 +11,7 @@ export type NodeMediaItem = {
 
 export type BoardImage = {
   id: number;
+  graphNodeId?: string;
   src: string;
   sourceDataUrl?: string;
   sourceUrl?: string;

@@ -218,6 +218,20 @@ const cloneGraphNodes = (graphNodes: GraphNodeInstance[]) =>
     params: graphNode.params ? { ...graphNode.params } : undefined,
   }));
 
+const getResolvedMediaGraphNodeId = (image: Pick<BoardImage, "id" | "graphNodeId">) =>
+  image.graphNodeId ?? getMediaGraphNodeId(image.id);
+
+const createMediaGraphNodeFromImage = (
+  image: Pick<BoardImage, "id" | "graphNodeId" | "x" | "y" | "width" | "z">,
+): GraphNodeInstance => ({
+  id: getResolvedMediaGraphNodeId(image),
+  definitionId: MEDIA_NODE_DEFINITION_ID,
+  x: image.x,
+  y: image.y,
+  width: image.width,
+  z: image.z,
+});
+
 function App() {
   const boardSettings = useBoardSettings();
   const darkMode = boardSettings.values[DARK_MODE_SETTING_ID] === true;
@@ -311,6 +325,45 @@ function App() {
     darkMode,
   });
 
+  const graphNodeById = useMemo(
+    () => new Map(graphNodes.map((graphNode) => [graphNode.id, graphNode])),
+    [graphNodes],
+  );
+  const getImageWithGraphLayout = (image: BoardImage): BoardImage => {
+    if (image.mediaKind === "note") {
+      return image;
+    }
+
+    const graphNode = graphNodeById.get(getResolvedMediaGraphNodeId(image));
+    if (!graphNode) {
+      return image;
+    }
+
+    if (
+      image.x === graphNode.x &&
+      image.y === graphNode.y &&
+      image.width === graphNode.width &&
+      image.z === graphNode.z
+    ) {
+      return image;
+    }
+
+    return {
+      ...image,
+      x: graphNode.x,
+      y: graphNode.y,
+      width: graphNode.width,
+      z: graphNode.z,
+    };
+  };
+  const layoutImages = useMemo(
+    () => images.map((image) => getImageWithGraphLayout(image)),
+    [graphNodeById, images],
+  );
+  const layoutImageById = useMemo(
+    () => new Map(layoutImages.map((image) => [image.id, image])),
+    [layoutImages],
+  );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const effectiveSeekPanelId = useMemo(
     () =>
@@ -347,22 +400,22 @@ function App() {
         .map((frame) => ({
           ...frame,
           memberIds: frame.memberIds.filter((id) =>
-            images.some((item) => item.id === id),
+            layoutImages.some((item) => item.id === id),
           ),
         }))
         .filter((frame) => frame.memberIds.length > 0),
-    [frames, images],
+    [frames, layoutImages],
   );
   const frameViews = useMemo(
     () =>
       activeFrames
         .map((frame) => {
-          const bounds = getFrameBounds(frame.memberIds, images);
+          const bounds = getFrameBounds(frame.memberIds, layoutImages);
           return bounds ? { id: frame.id, frame, bounds } : null;
         })
         .filter((value): value is FrameView => value !== null)
         .sort((a, b) => a.frame.z - b.frame.z),
-    [activeFrames, images],
+    [activeFrames, layoutImages],
   );
   const collapsedFrameMemberIds = useMemo(() => {
     const hidden = new Set<number>();
@@ -377,20 +430,130 @@ function App() {
     return hidden;
   }, [activeFrames]);
   const visibleImages = useMemo(
-    () => images.filter((item) => !collapsedFrameMemberIds.has(item.id)),
-    [collapsedFrameMemberIds, images],
+    () => layoutImages.filter((item) => !collapsedFrameMemberIds.has(item.id)),
+    [collapsedFrameMemberIds, layoutImages],
   );
   const boardDocument = useMemo<BoardDocument>(
     () => ({
-      images,
+      images: layoutImages,
       frames,
       graphNodes,
       connections,
       mediaTransforms: activeMediaTransforms,
       darkMode,
     }),
-    [activeMediaTransforms, connections, darkMode, frames, graphNodes, images],
+    [activeMediaTransforms, connections, darkMode, frames, graphNodes, layoutImages],
   );
+
+  useEffect(() => {
+    let didImagesChange = false;
+    let didGraphNodesChange = false;
+    let didConnectionsChange = false;
+    const remappedNodeIds = new Map<string, string>();
+
+    const nextImages = images.map((item) => {
+      if (item.mediaKind === "note") {
+        return item;
+      }
+
+      const legacyGraphNodeId = getMediaGraphNodeId(item.id);
+      const graphNodeId =
+        item.graphNodeId ??
+        createGraphNodeId(MEDIA_NODE_DEFINITION_ID, nextGraphNodeIdRef.current++);
+
+      remappedNodeIds.set(legacyGraphNodeId, graphNodeId);
+
+      if (item.graphNodeId === graphNodeId) {
+        return item;
+      }
+
+      didImagesChange = true;
+      return {
+        ...item,
+        graphNodeId,
+      };
+    });
+
+    const mediaImageByGraphNodeId = new Map(
+      nextImages
+        .filter((item) => item.mediaKind !== "note")
+        .map((item) => [getResolvedMediaGraphNodeId(item), item]),
+    );
+
+    const nextGraphNodes = graphNodes.filter((graphNode) => {
+      if (graphNode.definitionId !== MEDIA_NODE_DEFINITION_ID) {
+        return true;
+      }
+
+      const keep = mediaImageByGraphNodeId.has(graphNode.id);
+      didGraphNodesChange = didGraphNodesChange || !keep;
+      return keep;
+    });
+
+    const nextGraphNodeById = new Map(
+      nextGraphNodes.map((graphNode) => [graphNode.id, graphNode]),
+    );
+
+    for (const mediaImage of nextImages) {
+      if (mediaImage.mediaKind === "note") {
+        continue;
+      }
+
+      const graphNodeId = getResolvedMediaGraphNodeId(mediaImage);
+      const existing = nextGraphNodeById.get(graphNodeId);
+
+      if (!existing) {
+        const mediaGraphNode: GraphNodeInstance = {
+          id: graphNodeId,
+          definitionId: MEDIA_NODE_DEFINITION_ID,
+          x: mediaImage.x,
+          y: mediaImage.y,
+          width: mediaImage.width,
+          z: mediaImage.z,
+        };
+        nextGraphNodes.push(mediaGraphNode);
+        nextGraphNodeById.set(graphNodeId, mediaGraphNode);
+        didGraphNodesChange = true;
+      } else if (existing.definitionId !== MEDIA_NODE_DEFINITION_ID) {
+        nextGraphNodeById.set(graphNodeId, {
+          ...existing,
+          definitionId: MEDIA_NODE_DEFINITION_ID,
+        });
+        didGraphNodesChange = true;
+      }
+    }
+
+    const finalGraphNodes = didGraphNodesChange
+      ? nextGraphNodes.map(
+          (graphNode) => nextGraphNodeById.get(graphNode.id) ?? graphNode,
+        )
+      : graphNodes;
+
+    const nextConnections = connections.map((connection) => {
+      const remappedFromNodeId =
+        remappedNodeIds.get(connection.fromNodeId) ?? connection.fromNodeId;
+      if (remappedFromNodeId === connection.fromNodeId) {
+        return connection;
+      }
+
+      didConnectionsChange = true;
+      return {
+        ...connection,
+        fromNodeId: remappedFromNodeId,
+      };
+    });
+
+    if (didImagesChange) {
+      setImages(nextImages);
+    }
+    if (didGraphNodesChange) {
+      setGraphNodes(finalGraphNodes);
+    }
+    if (didConnectionsChange) {
+      setConnections(nextConnections);
+    }
+  }, [connections, graphNodes, images]);
+
   const selectedCollapsedFrame = useMemo(
     () =>
       selectedFrameId !== null
@@ -555,6 +718,90 @@ function App() {
     const scaleX = settings.flipHorizontal ? -settings.scaleX : settings.scaleX;
     return `translate(${settings.translateX}px, ${settings.translateY}px) rotate(${settings.rotateDeg}deg) scale(${scaleX}, ${settings.scaleY})`;
   };
+  const getRenderableImage = (id: number) => layoutImageById.get(id) ?? null;
+  const updateMediaNodeLayout = (
+    ids: number[],
+    updater: (
+      image: BoardImage,
+      layout: Pick<BoardImage, "x" | "y" | "width" | "z">,
+    ) => Partial<Pick<GraphNodeInstance, "x" | "y" | "width" | "z">> | null,
+  ) => {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const mediaIds = new Set(ids);
+    setGraphNodes((current) =>
+      current.map((graphNode) => {
+        if (graphNode.definitionId !== MEDIA_NODE_DEFINITION_ID) {
+          return graphNode;
+        }
+
+        const image = images.find(
+          (candidate) =>
+            candidate.mediaKind !== "note" &&
+            getResolvedMediaGraphNodeId(candidate) === graphNode.id &&
+            mediaIds.has(candidate.id),
+        );
+        if (!image) {
+          return graphNode;
+        }
+
+        const nextPatch = updater(image, {
+          x: graphNode.x,
+          y: graphNode.y,
+          width: graphNode.width,
+          z: graphNode.z,
+        });
+        return nextPatch ? { ...graphNode, ...nextPatch } : graphNode;
+      }),
+    );
+  };
+  const updateNoteLayout = (
+    ids: number[],
+    updater: (image: BoardImage) => Partial<Pick<BoardImage, "x" | "y" | "width" | "z">> | null,
+  ) => {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const idSet = new Set(ids);
+    setImages((current) =>
+      current.map((image) => {
+        if (image.mediaKind !== "note" || !idSet.has(image.id)) {
+          return image;
+        }
+
+        const patch = updater(image);
+        return patch ? { ...image, ...patch } : image;
+      }),
+    );
+  };
+  const updateNodeLayout = (
+    ids: number[],
+    updater: (
+      image: BoardImage,
+      layout: Pick<BoardImage, "x" | "y" | "width" | "z">,
+    ) => Partial<Pick<BoardImage, "x" | "y" | "width" | "z">> | null,
+  ) => {
+    const noteIds = ids.filter(
+      (id) => images.find((image) => image.id === id)?.mediaKind === "note",
+    );
+    const mediaIds = ids.filter((id) => !noteIds.includes(id));
+
+    updateMediaNodeLayout(mediaIds, (image, layout) => updater(image, layout));
+
+    if (noteIds.length > 0) {
+      updateNoteLayout(noteIds, (image) =>
+        updater(image, {
+          x: image.x,
+          y: image.y,
+          width: image.width,
+          z: image.z,
+        }),
+      );
+    }
+  };
   const displayNodes = useMemo(
     () =>
       visibleImages.map((image) => {
@@ -593,19 +840,26 @@ function App() {
     () => new Map(displayNodes.map((entry) => [entry.image.id, entry])),
     [displayNodes],
   );
-  const graphNodeById = useMemo(
-    () => new Map(graphNodes.map((graphNode) => [graphNode.id, graphNode])),
-    [graphNodes],
+  const mediaNodeByGraphNodeId = useMemo(
+    () =>
+      new Map(
+        layoutImages
+          .filter((item) => item.mediaKind !== "note")
+          .map((item) => [getResolvedMediaGraphNodeId(item), item]),
+      ),
+    [layoutImages],
   );
   const mediaNodeDefinition = getNodeDefinition(MEDIA_NODE_DEFINITION_ID);
 
   const getGraphNodeLabel = (nodeId: string) => {
+    const mediaNode = mediaNodeByGraphNodeId.get(nodeId);
+    if (mediaNode) {
+      return mediaNode.name;
+    }
+
     const mediaId = parseMediaGraphNodeId(nodeId);
     if (mediaId !== null) {
-      return (
-        images.find((item) => item.id === mediaId && item.mediaKind !== "note")
-          ?.name ?? "Missing media"
-      );
+      return images.find((item) => item.id === mediaId)?.name ?? "Missing media";
     }
 
     const graphNode = graphNodeById.get(nodeId);
@@ -639,12 +893,14 @@ function App() {
       return canvas.height / canvas.width;
     }
 
+    const mediaNode = mediaNodeByGraphNodeId.get(nodeId);
+    if (mediaNode) {
+      return mediaNode.aspect;
+    }
+
     const mediaId = parseMediaGraphNodeId(nodeId);
     if (mediaId !== null) {
-      return (
-        images.find((item) => item.id === mediaId && item.mediaKind !== "note")
-          ?.aspect ?? PREVIEW_NODE_EMPTY_ASPECT
-      );
+      return images.find((item) => item.id === mediaId)?.aspect ?? PREVIEW_NODE_EMPTY_ASPECT;
     }
 
     const graphNode = graphNodeById.get(nodeId);
@@ -751,7 +1007,8 @@ function App() {
   );
 
   const getGraphNodeOutputAnchor = (nodeId: string) => {
-    const mediaId = parseMediaGraphNodeId(nodeId);
+    const mediaNode = mediaNodeByGraphNodeId.get(nodeId);
+    const mediaId = mediaNode?.id ?? parseMediaGraphNodeId(nodeId);
     if (mediaId !== null) {
       const sourceEntry = displayNodeById.get(mediaId);
       if (!sourceEntry || sourceEntry.image.mediaKind === "note") {
@@ -1077,12 +1334,17 @@ function App() {
 
     visited.add(nodeId);
 
-    const mediaId = parseMediaGraphNodeId(nodeId);
-    if (mediaId !== null) {
-      const mediaNode = images.find(
-        (item) => item.id === mediaId && item.mediaKind !== "note",
-      );
-      return mediaNode ? renderMediaNodeOutputSurface(nodeId, mediaNode) : false;
+    const mediaNode =
+      mediaNodeByGraphNodeId.get(nodeId) ??
+      (() => {
+        const mediaId = parseMediaGraphNodeId(nodeId);
+        return mediaId !== null
+          ? images.find((item) => item.id === mediaId && item.mediaKind !== "note") ??
+              null
+          : null;
+      })();
+    if (mediaNode) {
+      return renderMediaNodeOutputSurface(nodeId, mediaNode);
     }
 
     const graphNode = graphNodeById.get(nodeId);
@@ -1120,11 +1382,16 @@ function App() {
 
     visited.add(nodeId);
 
-    const mediaId = parseMediaGraphNodeId(nodeId);
-    if (mediaId !== null) {
-      const mediaNode = images.find(
-        (item) => item.id === mediaId && item.mediaKind !== "note",
-      );
+    const mediaNode =
+      mediaNodeByGraphNodeId.get(nodeId) ??
+      (() => {
+        const mediaId = parseMediaGraphNodeId(nodeId);
+        return mediaId !== null
+          ? images.find((item) => item.id === mediaId && item.mediaKind !== "note") ??
+              null
+          : null;
+      })();
+    if (mediaNode) {
       return Boolean(
         mediaNode &&
           (mediaNode.mediaKind === "video" ||
@@ -1337,7 +1604,7 @@ function App() {
 
   const getFrameItems = (frame: BoardFrame) => {
     const members = frame.memberIds
-      .map((memberId) => images.find((item) => item.id === memberId) ?? null)
+      .map((memberId) => getRenderableImage(memberId))
       .filter((item): item is BoardImage => item !== null);
     return members;
   };
@@ -1409,12 +1676,37 @@ function App() {
         ...document,
         images: document.images.map((item) => {
           const nextPosition = positions.get(item.id);
-          if (!nextPosition) {
+          if (!nextPosition || item.mediaKind !== "note") {
             return item;
           }
 
           return {
             ...item,
+            x: nextPosition.x,
+            y: nextPosition.y,
+          };
+        }),
+        graphNodes: document.graphNodes.map((graphNode) => {
+          if (graphNode.definitionId !== MEDIA_NODE_DEFINITION_ID) {
+            return graphNode;
+          }
+
+          const targetImage = document.images.find(
+            (item) =>
+              item.mediaKind !== "note" &&
+              getResolvedMediaGraphNodeId(item) === graphNode.id,
+          );
+          if (!targetImage) {
+            return graphNode;
+          }
+
+          const nextPosition = positions.get(targetImage.id);
+          if (!nextPosition) {
+            return graphNode;
+          }
+
+          return {
+            ...graphNode,
             x: nextPosition.x,
             y: nextPosition.y,
           };
@@ -1522,14 +1814,21 @@ function App() {
     if (event.altKey) {
       const idMap = new Map<number, number>();
       const duplicatedItems = frame.memberIds
-        .map((memberId) => images.find((item) => item.id === memberId))
-        .filter((item): item is BoardImage => item !== undefined)
+        .map((memberId) => getRenderableImage(memberId))
+        .filter((item): item is BoardImage => item !== null)
         .map((source) => {
           const duplicateId = nextIdRef.current++;
           idMap.set(source.id, duplicateId);
           return {
             ...source,
             id: duplicateId,
+            graphNodeId:
+              source.mediaKind === "note"
+                ? undefined
+                : createGraphNodeId(
+                    MEDIA_NODE_DEFINITION_ID,
+                    nextGraphNodeIdRef.current++,
+                  ),
             z: nextZRef.current++,
           };
         });
@@ -1555,6 +1854,12 @@ function App() {
       );
 
       setImages((current) => [...current, ...duplicatedItems]);
+      setGraphNodes((current) => [
+        ...current,
+        ...duplicatedItems
+          .filter((item) => item.mediaKind !== "note")
+          .map((item) => createMediaGraphNodeFromImage(item)),
+      ]);
 
       setFrames((current) => [
         ...current,
@@ -1575,7 +1880,7 @@ function App() {
             continue;
           }
 
-          const source = images.find((item) => item.id === memberId);
+          const source = getRenderableImage(memberId);
           const sourceVideo =
             source?.mediaKind === "video" ? videoRefs.current[memberId] : null;
           const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null;
@@ -1598,7 +1903,7 @@ function App() {
       setGifSeekFrames((current) => {
         const next = { ...current };
         for (const memberId of frame.memberIds) {
-          const source = images.find((item) => item.id === memberId);
+          const source = getRenderableImage(memberId);
           const duplicateId = idMap.get(memberId);
           if (!source?.isGif || !duplicateId) {
             continue;
@@ -1633,7 +1938,7 @@ function App() {
     setSelectedId(null);
 
     const startPositions: Record<number, { x: number; y: number }> = {};
-    for (const item of images) {
+    for (const item of layoutImages) {
       if (frame.memberIds.includes(item.id)) {
         startPositions[item.id] = { x: item.x, y: item.y };
       }
@@ -1663,7 +1968,7 @@ function App() {
         .map((frame) => ({
           ...frame,
           memberIds: frame.memberIds.filter((memberId) =>
-            images.some((item) => item.id === memberId),
+            layoutImages.some((item) => item.id === memberId),
           ),
         }))
         .filter((frame) => frame.memberIds.length > 0);
@@ -1682,8 +1987,8 @@ function App() {
           const remainingIds = nextMemberIds.filter(
             (memberId) => memberId !== movedId,
           );
-          const bounds = getFrameBounds(remainingIds, images);
-          const movedItem = images.find((item) => item.id === movedId);
+          const bounds = getFrameBounds(remainingIds, layoutImages);
+          const movedItem = getRenderableImage(movedId);
           if (!bounds || !movedItem) {
             nextMemberIds = remainingIds;
             continue;
@@ -1719,7 +2024,7 @@ function App() {
       });
 
       for (const movedId of movedIds) {
-        const movedItem = images.find((item) => item.id === movedId);
+        const movedItem = getRenderableImage(movedId);
         if (!movedItem) {
           continue;
         }
@@ -1731,7 +2036,7 @@ function App() {
           .filter((frame) => !frame.collapsed)
           .sort((a, b) => b.z - a.z)
           .find((frame) => {
-            const bounds = getFrameBounds(frame.memberIds, images);
+            const bounds = getFrameBounds(frame.memberIds, layoutImages);
             return (
               bounds &&
               centerX >= bounds.left &&
@@ -1764,7 +2069,7 @@ function App() {
   };
 
   const untuckMediaNodeToFrame = (nodeId: number) => {
-    const sourceNode = images.find((item) => item.id === nodeId);
+    const sourceNode = getRenderableImage(nodeId);
     if (!sourceNode || sourceNode.mediaKind === "note") {
       return;
     }
@@ -1781,6 +2086,10 @@ function App() {
       const row = Math.floor(index / cols);
       return {
         id: nextIdRef.current++,
+        graphNodeId: createGraphNodeId(
+          MEDIA_NODE_DEFINITION_ID,
+          nextGraphNodeIdRef.current++,
+        ),
         src: mediaItem.src,
         sourceDataUrl: mediaItem.sourceDataUrl,
         sourceUrl: mediaItem.sourceUrl,
@@ -1801,6 +2110,12 @@ function App() {
     setImages((current) => [
       ...current.filter((item) => item.id !== nodeId),
       ...nextNodes,
+    ]);
+    setGraphNodes((current) => [
+      ...current.filter(
+        (graphNode) => graphNode.id !== getResolvedMediaGraphNodeId(sourceNode),
+      ),
+      ...nextNodes.map((node) => createMediaGraphNodeFromImage(node)),
     ]);
     setFrames((current) => [
       ...current
@@ -1905,32 +2220,23 @@ function App() {
       return;
     }
 
-    setImages((current) =>
-      current.map((item) => {
-        if (!scaleMode.ids.includes(item.id)) {
-          return item;
-        }
-
-        const start = scaleMode.startItems[item.id];
-        if (!start) {
-          return item;
-        }
-
-        return {
-          ...item,
-          x:
-            scaleMode.centerX +
-            (start.x - scaleMode.centerX) * scaleMode.previewScale,
-          y:
-            scaleMode.centerY +
-            (start.y - scaleMode.centerY) * scaleMode.previewScale,
-          width: Math.max(
-            MIN_IMAGE_WIDTH,
-            start.width * scaleMode.previewScale,
-          ),
-        };
-      }),
-    );
+    updateNodeLayout(scaleMode.ids, (image) => {
+      const start = scaleMode.startItems[image.id];
+      return start
+        ? {
+            x:
+              scaleMode.centerX +
+              (start.x - scaleMode.centerX) * scaleMode.previewScale,
+            y:
+              scaleMode.centerY +
+              (start.y - scaleMode.centerY) * scaleMode.previewScale,
+            width: Math.max(
+              MIN_IMAGE_WIDTH,
+              start.width * scaleMode.previewScale,
+            ),
+          }
+        : null;
+    });
 
     setScaleMode(null);
   };
@@ -1940,24 +2246,15 @@ function App() {
       return;
     }
 
-    setImages((current) =>
-      current.map((item) => {
-        if (!moveMode.ids.includes(item.id)) {
-          return item;
-        }
-
-        const start = moveMode.startItems[item.id];
-        if (!start) {
-          return item;
-        }
-
-        return {
-          ...item,
-          x: start.x + moveMode.offsetX,
-          y: start.y + moveMode.offsetY,
-        };
-      }),
-    );
+    updateNodeLayout(moveMode.ids, (image) => {
+      const start = moveMode.startItems[image.id];
+      return start
+        ? {
+            x: start.x + moveMode.offsetX,
+            y: start.y + moveMode.offsetY,
+          }
+        : null;
+    });
 
     setMoveMode(null);
   };
@@ -2372,7 +2669,7 @@ function App() {
           return;
         }
 
-        const selected = images.filter((item) => activeIds.includes(item.id));
+        const selected = layoutImages.filter((item) => activeIds.includes(item.id));
         if (selected.length === 0) {
           return;
         }
@@ -2394,7 +2691,7 @@ function App() {
           centerX = item.x + item.width / 2;
           centerY = item.y + getItemHeight(item) / 2;
         } else {
-          const bounds = getGroupBounds(activeIds, images);
+          const bounds = getGroupBounds(activeIds, layoutImages);
           if (!bounds) {
             return;
           }
@@ -2446,7 +2743,7 @@ function App() {
           return;
         }
 
-        const selected = images.filter((item) => activeIds.includes(item.id));
+        const selected = layoutImages.filter((item) => activeIds.includes(item.id));
         if (selected.length === 0) {
           return;
         }
@@ -2477,7 +2774,7 @@ function App() {
           return;
         }
 
-        const selectedMedia = images.find((item) => item.id === activeId);
+        const selectedMedia = getRenderableImage(activeId);
         if (
           !selectedMedia ||
           (selectedMedia.mediaKind !== "video" && !selectedMedia.isGif)
@@ -2499,74 +2796,34 @@ function App() {
       ) {
         event.preventDefault();
 
-        setImages((current) => {
-          const selected = current.filter((item) =>
-            selectedIds.includes(item.id),
+        const selected = layoutImages.filter((item) =>
+          selectedIds.includes(item.id),
+        );
+        if (selected.length < 2) {
+          return;
+        }
+
+        if (event.key === "ArrowUp") {
+          const topY = Math.min(...selected.map((item) => item.y));
+          updateNodeLayout(selectedIds, () => ({ y: topY }));
+        } else if (event.key === "ArrowDown") {
+          const bottomY = Math.max(
+            ...selected.map((item) => item.y + getItemHeight(item)),
           );
-          if (selected.length < 2) {
-            return current;
-          }
-
-          if (event.key === "ArrowUp") {
-            const topY = Math.min(...selected.map((item) => item.y));
-            return current.map((item) =>
-              selectedIds.includes(item.id)
-                ? {
-                    ...item,
-                    y: topY,
-                  }
-                : item,
-            );
-          }
-
-          if (event.key === "ArrowDown") {
-            const bottomY = Math.max(
-              ...selected.map((item) => item.y + getItemHeight(item)),
-            );
-            return current.map((item) => {
-              if (!selectedIds.includes(item.id)) {
-                return item;
-              }
-
-              return {
-                ...item,
-                y: bottomY - getItemHeight(item),
-              };
-            });
-          }
-
-          if (event.key === "ArrowLeft") {
-            const leftX = Math.min(...selected.map((item) => item.x));
-            return current.map((item) =>
-              selectedIds.includes(item.id)
-                ? {
-                    ...item,
-                    x: leftX,
-                  }
-                : item,
-            );
-          }
-
-          if (event.key === "ArrowRight") {
-            const rightX = Math.max(
-              ...selected.map((item) => item.x + item.width),
-            );
-            return current.map((item) =>
-              selectedIds.includes(item.id)
-                ? {
-                    ...item,
-                    x: rightX - item.width,
-                  }
-                : item,
-            );
-          }
-
-          if (isLayoutShortcut) {
-            return current;
-          }
-
-          return current;
-        });
+          updateNodeLayout(selectedIds, (_image, layout) => ({
+            y: bottomY - (layout.width * _image.aspect + CAPTION_HEIGHT + CARD_BORDER_HEIGHT),
+          }));
+        } else if (event.key === "ArrowLeft") {
+          const leftX = Math.min(...selected.map((item) => item.x));
+          updateNodeLayout(selectedIds, () => ({ x: leftX }));
+        } else if (event.key === "ArrowRight") {
+          const rightX = Math.max(
+            ...selected.map((item) => item.x + item.width),
+          );
+          updateNodeLayout(selectedIds, (_image, layout) => ({
+            x: rightX - layout.width,
+          }));
+        }
         if (isLayoutShortcut) {
           layoutNodes(selectedIds);
           return;
@@ -2722,7 +2979,7 @@ function App() {
     const validMediaNodeIds = new Set(
       images
         .filter((item) => item.mediaKind !== "note")
-        .map((item) => getMediaGraphNodeId(item.id)),
+        .map((item) => getResolvedMediaGraphNodeId(item)),
     );
     const validGraphNodeIds = new Set(graphNodes.map((graphNode) => graphNode.id));
     const validOutputNodeIds = new Set<string>([
@@ -2759,7 +3016,7 @@ function App() {
     const validIds = new Set<string>([
       ...images
         .filter((item) => item.mediaKind !== "note")
-        .map((item) => getMediaGraphNodeId(item.id)),
+        .map((item) => getResolvedMediaGraphNodeId(item)),
       ...graphNodes.map((graphNode) => graphNode.id),
     ]);
     let didChange = false;
@@ -2846,7 +3103,7 @@ function App() {
         !frame.collapsed && hasSameMembers(frame.memberIds, activeGroupIds),
     );
     if (activeGroupIds.length > 1 && !selectionAlreadyPersisted) {
-      const bounds = getGroupBounds(activeGroupIds, images);
+      const bounds = getGroupBounds(activeGroupIds, layoutImages);
       if (!bounds) {
         return;
       }
@@ -2880,7 +3137,7 @@ function App() {
         return { ...current, active: false };
       });
     }, 0);
-  }, [selectedIds, images, activeFrames]);
+  }, [selectedIds, layoutImages, activeFrames]);
 
   const getBoardPointer = (event: ReactPointerEvent) => {
     return getBoardPointFromClient(event.clientX, event.clientY);
@@ -2999,6 +3256,10 @@ function App() {
 
         return {
           id: item.id,
+          graphNodeId: createGraphNodeId(
+            MEDIA_NODE_DEFINITION_ID,
+            nextGraphNodeIdRef.current++,
+          ),
           src: item.src,
           sourceDataUrl: item.sourceDataUrl,
           sourceUrl: item.sourceUrl,
@@ -3019,6 +3280,10 @@ function App() {
     const after = {
       ...before,
       images: [...before.images, ...nextImages],
+      graphNodes: [
+        ...before.graphNodes,
+        ...nextImages.map((image) => createMediaGraphNodeFromImage(image)),
+      ],
     };
     applyDocument(after);
     recordHistoryEntry(historyLabel, before, after);
@@ -3251,7 +3516,7 @@ function App() {
     const shouldAppendToNode = event.shiftKey || keyStateRef.current.shift;
 
     if (point) {
-      const targetNode = [...images]
+      const targetNode = [...layoutImages]
         .filter((item) => item.mediaKind !== "note")
         .sort((a, b) => b.z - a.z)
         .find((item) => {
@@ -3474,16 +3739,26 @@ function App() {
   };
 
   const bringToFront = (id: number) => {
-    setImages((current) =>
-      current.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              z: nextZRef.current++,
-            }
-          : item,
-      ),
-    );
+    const target = images.find((item) => item.id === id);
+    if (!target) {
+      return;
+    }
+
+    if (target.mediaKind === "note") {
+      setImages((current) =>
+        current.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                z: nextZRef.current++,
+              }
+            : item,
+        ),
+      );
+      return;
+    }
+
+    updateMediaNodeLayout([id], () => ({ z: nextZRef.current++ }));
   };
 
   const onPointerDown = (event: ReactPointerEvent, id: number) => {
@@ -3499,7 +3774,7 @@ function App() {
         return;
       }
 
-      const sourceNode = images.find((img) => img.id === id);
+      const sourceNode = getRenderableImage(id);
       if (!sourceNode || sourceNode.mediaKind === "note") {
         return;
       }
@@ -3548,7 +3823,7 @@ function App() {
       return;
     }
 
-    const targetImage = images.find((img) => img.id === id);
+    const targetImage = getRenderableImage(id);
     if (!targetImage) {
       return;
     }
@@ -3575,20 +3850,27 @@ function App() {
       const sourceIds =
         selectedIds.length > 1 && selectedSet.has(id)
           ? selectedIds.filter((selected) =>
-              images.some((item) => item.id === selected),
+              layoutImages.some((item) => item.id === selected),
             )
           : [id];
 
       const idMap = new Map<number, number>();
       const duplicatedItems = sourceIds
-        .map((sourceId) => images.find((item) => item.id === sourceId))
-        .filter((item): item is BoardImage => item !== undefined)
+        .map((sourceId) => getRenderableImage(sourceId))
+        .filter((item): item is BoardImage => item !== null)
         .map((source) => {
           const duplicateId = nextIdRef.current++;
           idMap.set(source.id, duplicateId);
           return {
             ...source,
             id: duplicateId,
+            graphNodeId:
+              source.mediaKind === "note"
+                ? undefined
+                : createGraphNodeId(
+                    MEDIA_NODE_DEFINITION_ID,
+                    nextGraphNodeIdRef.current++,
+                  ),
             z: nextZRef.current++,
           };
         });
@@ -3598,6 +3880,12 @@ function App() {
       }
 
       setImages((current) => [...current, ...duplicatedItems]);
+      setGraphNodes((current) => [
+        ...current,
+        ...duplicatedItems
+          .filter((item) => item.mediaKind !== "note")
+          .map((item) => createMediaGraphNodeFromImage(item)),
+      ]);
 
       setVideoTimelines((current) => {
         const next = { ...current };
@@ -3607,7 +3895,7 @@ function App() {
             continue;
           }
 
-          const source = images.find((item) => item.id === sourceId);
+          const source = getRenderableImage(sourceId);
           const sourceVideo =
             source?.mediaKind === "video" ? videoRefs.current[sourceId] : null;
           const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null;
@@ -3630,7 +3918,7 @@ function App() {
       setGifSeekFrames((current) => {
         const next = { ...current };
         for (const sourceId of sourceIds) {
-          const source = images.find((item) => item.id === sourceId);
+          const source = getRenderableImage(sourceId);
           const duplicateId = idMap.get(sourceId);
           if (!source?.isGif || !duplicateId) {
             continue;
@@ -3674,10 +3962,10 @@ function App() {
 
     if (selectedIds.length > 1 && selectedSet.has(id)) {
       const activeIds = selectedIds.filter((selected) =>
-        images.some((item) => item.id === selected),
+        layoutImages.some((item) => item.id === selected),
       );
       const startPositions: Record<number, { x: number; y: number }> = {};
-      for (const item of images) {
+      for (const item of layoutImages) {
         if (activeIds.includes(item.id)) {
           startPositions[item.id] = { x: item.x, y: item.y };
         }
@@ -3827,7 +4115,7 @@ function App() {
     setSelectedFrameId(null);
     setSelectedId(id);
     setSelectedIds([id]);
-    startWireDrag(event, getMediaGraphNodeId(id), MEDIA_OUTPUT_PORT_ID);
+    startWireDrag(event, getResolvedMediaGraphNodeId(sourceNode), MEDIA_OUTPUT_PORT_ID);
   };
 
   const onGraphNodeOutputPointerDown = (
@@ -3908,7 +4196,7 @@ function App() {
       return;
     }
 
-    const targetImage = images.find((img) => img.id === id);
+    const targetImage = getRenderableImage(id);
     if (!targetImage) {
       return;
     }
@@ -4015,13 +4303,13 @@ function App() {
       return;
     }
 
-    const activeIds = ids.filter((id) => images.some((item) => item.id === id));
+    const activeIds = ids.filter((id) => layoutImages.some((item) => item.id === id));
     if (activeIds.length < 2) {
       return;
     }
 
     const startPositions: Record<number, { x: number; y: number }> = {};
-    for (const item of images) {
+    for (const item of layoutImages) {
       if (activeIds.includes(item.id)) {
         startPositions[item.id] = { x: item.x, y: item.y };
       }
@@ -4062,7 +4350,7 @@ function App() {
       return;
     }
 
-    const activeIds = ids.filter((id) => images.some((item) => item.id === id));
+    const activeIds = ids.filter((id) => layoutImages.some((item) => item.id === id));
     if (activeIds.length < 2) {
       return;
     }
@@ -4071,7 +4359,7 @@ function App() {
       {};
     let minScale = Number.POSITIVE_INFINITY;
 
-    for (const item of images) {
+    for (const item of layoutImages) {
       if (!activeIds.includes(item.id)) {
         continue;
       }
@@ -4203,7 +4491,7 @@ function App() {
       const right = Math.max(marquee.startX, point.x);
       const bottom = Math.max(marquee.startY, point.y);
 
-      const nextSelectedIds = images
+      const nextSelectedIds = layoutImages
         .filter((item) => {
           const rect = getItemRect(item);
           return !(
@@ -4241,34 +4529,15 @@ function App() {
       const x = point.x - interaction.offsetX;
       const y = point.y - interaction.offsetY;
 
-      setImages((current) =>
-        current.map((item) =>
-          item.id === interaction.id
-            ? {
-                ...item,
-                x,
-                y,
-              }
-            : item,
-        ),
-      );
+      updateNodeLayout([interaction.id], () => ({ x, y }));
       return;
     }
 
     if (interaction.kind === "resize") {
       const deltaX = point.x - interaction.startPointerX;
-      setImages((current) =>
-        current.map((item) => {
-          if (item.id !== interaction.id) {
-            return item;
-          }
-
-          return {
-            ...item,
-            width: Math.max(MIN_IMAGE_WIDTH, interaction.startWidth + deltaX),
-          };
-        }),
-      );
+      updateNodeLayout([interaction.id], () => ({
+        width: Math.max(MIN_IMAGE_WIDTH, interaction.startWidth + deltaX),
+      }));
       return;
     }
 
@@ -4276,24 +4545,15 @@ function App() {
       const deltaX = point.x - interaction.startPointerX;
       const deltaY = point.y - interaction.startPointerY;
 
-      setImages((current) =>
-        current.map((item) => {
-          if (!interaction.ids.includes(item.id)) {
-            return item;
-          }
-
-          const start = interaction.startPositions[item.id];
-          if (!start) {
-            return item;
-          }
-
-          return {
-            ...item,
-            x: start.x + deltaX,
-            y: start.y + deltaY,
-          };
-        }),
-      );
+      updateNodeLayout(interaction.ids, (image) => {
+        const start = interaction.startPositions[image.id];
+        return start
+          ? {
+              x: start.x + deltaX,
+              y: start.y + deltaY,
+            }
+          : null;
+      });
       return;
     }
 
@@ -4301,20 +4561,15 @@ function App() {
       const deltaX = point.x - interaction.startPointerX;
       const deltaY = point.y - interaction.startPointerY;
 
-      setImages((current) =>
-        current.map((item) => {
-          const start = interaction.startPositions[item.id];
-          if (!start) {
-            return item;
-          }
-
-          return {
-            ...item,
-            x: start.x + deltaX,
-            y: start.y + deltaY,
-          };
-        }),
-      );
+      updateNodeLayout(Object.keys(interaction.startPositions).map(Number), (image) => {
+        const start = interaction.startPositions[image.id];
+        return start
+          ? {
+              x: start.x + deltaX,
+              y: start.y + deltaY,
+            }
+          : null;
+      });
       return;
     }
 
@@ -4330,6 +4585,11 @@ function App() {
       }
 
       const newNodeId = nextIdRef.current++;
+      const newGraphNodeId = createGraphNodeId(
+        MEDIA_NODE_DEFINITION_ID,
+        nextGraphNodeIdRef.current++,
+      );
+      const newNodeZ = nextZRef.current++;
       const extractedMedia = interaction.extractedMedia;
 
       setImages((current) => {
@@ -4367,6 +4627,7 @@ function App() {
 
         const extractedNode: BoardImage = {
           id: newNodeId,
+          graphNodeId: newGraphNodeId,
           src: extractedMedia.src,
           sourceDataUrl: extractedMedia.sourceDataUrl,
           sourceUrl: extractedMedia.sourceUrl,
@@ -4381,7 +4642,7 @@ function App() {
           y: point.y - interaction.offsetY,
           width: interaction.sourceWidth,
           aspect: interaction.sourceAspect,
-          z: nextZRef.current++,
+          z: newNodeZ,
         };
 
         return [
@@ -4408,6 +4669,17 @@ function App() {
           extractedNode,
         ];
       });
+      setGraphNodes((current) => [
+        ...current,
+        createMediaGraphNodeFromImage({
+          id: newNodeId,
+          graphNodeId: newGraphNodeId,
+          x: point.x - interaction.offsetX,
+          y: point.y - interaction.offsetY,
+          width: interaction.sourceWidth,
+          z: newNodeZ,
+        }),
+      ]);
 
       setSelectedId(newNodeId);
       setSelectedIds([newNodeId]);
@@ -4428,29 +4700,20 @@ function App() {
       (interaction.startBounds.width + deltaX) / interaction.startBounds.width;
     const scale = Math.max(interaction.minScale, rawScale);
 
-    setImages((current) =>
-      current.map((item) => {
-        if (!interaction.ids.includes(item.id)) {
-          return item;
-        }
-
-        const start = interaction.startItems[item.id];
-        if (!start) {
-          return item;
-        }
-
-        return {
-          ...item,
-          x:
-            interaction.startBounds.left +
-            (start.x - interaction.startBounds.left) * scale,
-          y:
-            interaction.startBounds.top +
-            (start.y - interaction.startBounds.top) * scale,
-          width: Math.max(MIN_IMAGE_WIDTH, start.width * scale),
-        };
-      }),
-    );
+    updateNodeLayout(interaction.ids, (image) => {
+      const start = interaction.startItems[image.id];
+      return start
+        ? {
+            x:
+              interaction.startBounds.left +
+              (start.x - interaction.startBounds.left) * scale,
+            y:
+              interaction.startBounds.top +
+              (start.y - interaction.startBounds.top) * scale,
+            width: Math.max(MIN_IMAGE_WIDTH, start.width * scale),
+          }
+        : null;
+    });
   };
 
   const stopDrag = (event?: ReactPointerEvent<HTMLElement>) => {
@@ -4505,10 +4768,10 @@ function App() {
         const sourceId = interaction.id;
         let createdFrameId: number | null = null;
 
-        const sourceNode = images.find((item) => item.id === sourceId);
+        const sourceNode = getRenderableImage(sourceId);
         if (sourceNode) {
           const sourceRect = getItemRect(sourceNode);
-          const targetNode = [...images]
+          const targetNode = [...layoutImages]
             .filter((item) => item.id !== sourceId && item.z < sourceNode.z)
             .sort((a, b) => b.z - a.z)
             .find((item) => {
@@ -4619,7 +4882,7 @@ function App() {
             .filter((frame) => frame.id !== sourceFrame.id)
             .sort((a, b) => b.z - a.z)
             .find((frame) => {
-              const bounds = getFrameBounds(frame.memberIds, images);
+              const bounds = getFrameBounds(frame.memberIds, layoutImages);
               return (
                 bounds &&
                 point.x >= bounds.left &&
@@ -4908,7 +5171,7 @@ function App() {
                   bounds={displayBounds}
                   selected={selectedFrameId === frame.id}
                   renameRequested={renamingFrameId === frame.id}
-                  displayZIndex={Math.min(...frame.memberIds.map((id) => images.find((item) => item.id === id)?.z ?? frame.z)) - 1}
+                  displayZIndex={Math.min(...frame.memberIds.map((id) => getRenderableImage(id)?.z ?? frame.z)) - 1}
                   activeItem={activeItem}
                   previewItems={previewItems}
                   hiddenCount={frame.memberIds.length}
@@ -5011,7 +5274,7 @@ function App() {
                 displayWidth={displayWidth}
                 outputConnected={connections.some(
                   (connection) =>
-                    connection.fromNodeId === getMediaGraphNodeId(image.id) &&
+                    connection.fromNodeId === getResolvedMediaGraphNodeId(image) &&
                     connection.fromPortId === MEDIA_OUTPUT_PORT_ID,
                 )}
                 broken={Boolean(activeBrokenMediaIds[image.id])}
@@ -5101,7 +5364,9 @@ function App() {
                     (item) => item.id === id && item.mediaKind !== "note",
                   );
                   if (outputNode) {
-                    renderGraphNodeOutputSurface(getMediaGraphNodeId(id));
+                    renderGraphNodeOutputSurface(
+                      getResolvedMediaGraphNodeId(outputNode),
+                    );
                   }
 
                   const nextAspect = videoEl.videoHeight / videoEl.videoWidth;
@@ -5166,7 +5431,9 @@ function App() {
                     (item) => item.id === id && item.mediaKind !== "note",
                   );
                   if (outputNode) {
-                    renderGraphNodeOutputSurface(getMediaGraphNodeId(id));
+                    renderGraphNodeOutputSurface(
+                      getResolvedMediaGraphNodeId(outputNode),
+                    );
                   }
                 }}
                 onMediaError={(id) => {
@@ -5192,7 +5459,9 @@ function App() {
                     (item) => item.id === id && item.mediaKind !== "note",
                   );
                   if (outputNode) {
-                    renderGraphNodeOutputSurface(getMediaGraphNodeId(id));
+                    renderGraphNodeOutputSurface(
+                      getResolvedMediaGraphNodeId(outputNode),
+                    );
                   }
 
                   const nextAspect = imgEl.naturalHeight / imgEl.naturalWidth;
@@ -5258,7 +5527,9 @@ function App() {
                     (item) => item.id === id && item.mediaKind !== "note",
                   );
                   if (outputNode) {
-                    renderGraphNodeOutputSurface(getMediaGraphNodeId(id));
+                    renderGraphNodeOutputSurface(
+                      getResolvedMediaGraphNodeId(outputNode),
+                    );
                   }
                 }}
                 onSeekGif={onGifSeek}
