@@ -13,6 +13,7 @@ import {
   applyActiveMediaFromItems,
   BoardNode,
   BoardViewport,
+  boardSettingsStore,
   buildSnapshot,
   clearPersistedBoardSnapshot,
   ContextMenu,
@@ -35,9 +36,12 @@ import {
   parseSnapshot,
   savePersistedBoardSnapshot,
   SelectionMarquee,
+  SettingsPopover,
   ShaderSandbox,
   START_X,
   START_Y,
+  toggleBoardSettingValue,
+  useBoardSettings,
   WORLD_ORIGIN,
   WORLD_SIZE,
 } from "./features/board";
@@ -102,12 +106,26 @@ const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
 };
 
 const BOARD_PERSISTENCE_DEBOUNCE_MS = 150;
+const DARK_MODE_SETTING_ID = "appearance.darkMode";
+const SELECTION_SHADER_SETTING_ID = "rendering.selectionShader";
+const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
+const INSPECTOR_WIDTH_SETTING_ID = "workspace.inspectorWidth";
+const SHADER_SANDBOX_SETTING_ID = "workspace.shaderSandbox";
 
 function App() {
+  const boardSettings = useBoardSettings();
+  const darkMode = boardSettings.values[DARK_MODE_SETTING_ID] === true;
+  const enableSelectionShader =
+    boardSettings.values[SELECTION_SHADER_SETTING_ID] !== false;
+  const shaderCompositingEnabled =
+    boardSettings.values[SHADER_COMPOSITING_SETTING_ID] !== false;
+  const inspectorWidth =
+    typeof boardSettings.values[INSPECTOR_WIDTH_SETTING_ID] === "number"
+      ? boardSettings.values[INSPECTOR_WIDTH_SETTING_ID]
+      : 300;
+  const showShaderSandbox =
+    boardSettings.values[SHADER_SANDBOX_SETTING_ID] === true;
   const [images, setImages] = useState<BoardImage[]>([]);
-  const [darkMode, setDarkMode] = useState(
-    () => window.localStorage.getItem("reference-board-theme") === "dark",
-  );
   const [persistenceHydrated, setPersistenceHydrated] = useState(false);
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
   const [scaleMode, setScaleMode] = useState<ScaleModeState | null>(null);
@@ -141,10 +159,7 @@ function App() {
   );
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isEditorFocused, setIsEditorFocused] = useState(false);
-  const [enableSelectionShader, setEnableSelectionShader] = useState(true);
-  const [shaderCompositingEnabled, setShaderCompositingEnabled] = useState(true);
-  const [showShaderSandbox, setShowShaderSandbox] = useState(false);
-  const [inspectorWidth, setInspectorWidth] = useState(300);
+  const [settingsPopoverOpen, setSettingsPopoverOpen] = useState(false);
   const [inspectorResize, setInspectorResize] = useState<{
     startX: number;
     startWidth: number;
@@ -494,7 +509,7 @@ function App() {
     setImages(document.images);
     setFrames(document.frames);
     setMediaTransforms(document.mediaTransforms);
-    setDarkMode(document.darkMode);
+    boardSettingsStore.setValue(DARK_MODE_SETTING_ID, document.darkMode);
     documentRef.current = cloneDocument(document);
   };
 
@@ -1088,7 +1103,7 @@ function App() {
         220,
         Math.min(maxWidth, inspectorResize.startWidth + delta),
       );
-      setInspectorWidth(nextWidth);
+      boardSettingsStore.setValue(INSPECTOR_WIDTH_SETTING_ID, nextWidth);
     };
 
     const stopResize = () => {
@@ -1219,13 +1234,6 @@ function App() {
   };
 
   useEffect(() => {
-    window.localStorage.setItem(
-      "reference-board-theme",
-      darkMode ? "dark" : "light",
-    );
-  }, [darkMode]);
-
-  useEffect(() => {
     let cancelled = false;
 
     const restorePersistedSnapshot = (snapshotState: ParsedSnapshot) => {
@@ -1239,7 +1247,7 @@ function App() {
       setImages(restoredDocument.images);
       setFrames(restoredDocument.frames);
       setMediaTransforms(restoredDocument.mediaTransforms);
-      setDarkMode(restoredDocument.darkMode);
+      boardSettingsStore.setValue(DARK_MODE_SETTING_ID, restoredDocument.darkMode);
       documentRef.current = {
         images: restoredDocument.images.map((image) => ({
           ...image,
@@ -3602,10 +3610,8 @@ function App() {
       style={appShellStyle}
     >
       <AppToolbar
-        darkMode={darkMode}
         imageCount={images.length}
         enableSelectionShader={enableSelectionShader}
-        shaderCompositingEnabled={shaderCompositingEnabled}
         shaderSandboxOpen={showShaderSandbox}
         onAddFiles={(files) => {
           void handleFiles(files);
@@ -3617,14 +3623,17 @@ function App() {
         }}
         onCenterView={centerView}
         onClearBoard={clearBoard}
-        onToggleDarkMode={() => {
-          setDarkMode((current) => !current);
-        }}
-        onToggleShaderCompositing={() => {
-          setShaderCompositingEnabled((current) => !current);
+        onOpenSettings={() => {
+          setSettingsPopoverOpen(true);
         }}
         onToggleShaderSandbox={() => {
-          setShowShaderSandbox((current) => !current);
+          toggleBoardSettingValue(SHADER_SANDBOX_SETTING_ID);
+        }}
+      />
+      <SettingsPopover
+        open={settingsPopoverOpen}
+        onClose={() => {
+          setSettingsPopoverOpen(false);
         }}
       />
       {showShaderSandbox ? (
@@ -3859,7 +3868,7 @@ function App() {
               onContextMenu={onNodeContextMenu}
               onResizePointerDown={onResizePointerDown}
               onDisableSelectionShader={() => {
-                setEnableSelectionShader(false);
+                boardSettingsStore.setValue(SELECTION_SHADER_SETTING_ID, false);
               }}
                 onNoteFocusChange={setIsEditorFocused}
                 onNoteMarkdownChange={(id, markdown) => {

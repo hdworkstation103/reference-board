@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
 type AppToolbarProps = {
-  darkMode: boolean
   imageCount: number
   enableSelectionShader: boolean
-  shaderCompositingEnabled: boolean
   shaderSandboxOpen: boolean
   onAddFiles: (files: FileList | null) => void
   onSaveVersion: () => void
@@ -12,16 +10,13 @@ type AppToolbarProps = {
   onLoadVersion: (files: FileList | null) => void
   onCenterView: () => void
   onClearBoard: () => void
-  onToggleDarkMode: () => void
-  onToggleShaderCompositing: () => void
+  onOpenSettings: () => void
   onToggleShaderSandbox: () => void
 }
 
 function AppToolbar({
-  darkMode,
   imageCount,
   enableSelectionShader,
-  shaderCompositingEnabled,
   shaderSandboxOpen,
   onAddFiles,
   onSaveVersion,
@@ -29,8 +24,7 @@ function AppToolbar({
   onLoadVersion,
   onCenterView,
   onClearBoard,
-  onToggleDarkMode,
-  onToggleShaderCompositing,
+  onOpenSettings,
   onToggleShaderSandbox,
 }: AppToolbarProps) {
   const [openMenu, setOpenMenu] = useState<'file' | 'view' | null>(null)
@@ -110,6 +104,12 @@ function AppToolbar({
             </label>
             <button type="button" className="menu-item" onClick={() => {
               setOpenMenu(null)
+              onOpenSettings()
+            }}>
+              Settings
+            </button>
+            <button type="button" className="menu-item" onClick={() => {
+              setOpenMenu(null)
               onAddNote()
             }}>
               Add Note
@@ -154,18 +154,6 @@ function AppToolbar({
               onCenterView()
             }}>
               Reset View
-            </button>
-            <button type="button" className="menu-item" onClick={() => {
-              setOpenMenu(null)
-              onToggleDarkMode()
-            }}>
-              {darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            </button>
-            <button type="button" className="menu-item" onClick={() => {
-              setOpenMenu(null)
-              onToggleShaderCompositing()
-            }}>
-              {shaderCompositingEnabled ? 'Disable Shader Compositing' : 'Enable Shader Compositing'}
             </button>
             <button type="button" className="menu-item" onClick={() => {
               setOpenMenu(null)

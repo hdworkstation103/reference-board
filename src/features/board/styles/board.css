@@ -315,9 +315,16 @@ label.menu-item {
 
 .inspector-header {
   padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid #d4dae1;
+}
+
+.inspector-title {
   font-size: 13px;
   font-weight: 700;
-  border-bottom: 1px solid #d4dae1;
   color: #263141;
 }
 
@@ -328,6 +335,7 @@ label.menu-item {
   gap: 12px;
   flex: 1;
   min-height: 0;
+  overflow: auto;
 }
 
 .inspector-empty {
@@ -535,6 +543,224 @@ label.menu-item {
 .inspector-reset-transform:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.settings-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-panel-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #223044;
+}
+
+.settings-panel-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #667588;
+}
+
+.settings-panel-reset {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #ccd5df;
+  background: #fff;
+  color: #223044;
+  border-radius: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.settings-panel-reset:hover {
+  background: #eef5fd;
+}
+
+.settings-section {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d7dde5;
+  border-radius: 12px;
+  background: #f8fbfd;
+}
+
+.settings-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #243548;
+}
+
+.settings-section-description {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #687a90;
+}
+
+.settings-section-body {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-field {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-field-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-field-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #223044;
+}
+
+.settings-field-description {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #6b788b;
+}
+
+.settings-field-control {
+  display: flex;
+  align-items: center;
+}
+
+.settings-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #223044;
+}
+
+.settings-checkbox input {
+  margin: 0;
+}
+
+.settings-select,
+.settings-text,
+.settings-number {
+  width: 100%;
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid #ccd5df;
+  background: #fff;
+  color: #223044;
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.settings-range {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-range input {
+  width: 100%;
+  margin: 0;
+}
+
+.settings-range output {
+  min-width: 52px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+  color: #5d7087;
+}
+
+.settings-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(21, 28, 37, 0.28);
+  backdrop-filter: blur(10px);
+}
+
+.settings-popover {
+  width: min(760px, 100%);
+  max-height: min(80vh, 860px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid rgba(186, 198, 211, 0.9);
+  border-radius: 22px;
+  background: rgba(253, 254, 255, 0.96);
+  box-shadow: 0 30px 90px rgba(21, 31, 44, 0.24);
+  overflow: hidden;
+}
+
+.settings-popover-chrome {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid #dbe3ec;
+}
+
+.settings-popover-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  color: #1f2d3a;
+}
+
+.settings-popover-subtitle {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #667588;
+}
+
+.settings-popover-close {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #223044;
+  padding: 9px 12px;
+  border: 1px solid #ccd5df;
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.settings-popover-close:hover {
+  background: #eef5fd;
+}
+
+.settings-popover-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 22px 22px;
+}
+
+.settings-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
 }
 
 .board-wrap {
@@ -776,6 +1002,9 @@ label.menu-item {
 
 .app-shell.dark .inspector-header {
   border-bottom-color: #343434;
+}
+
+.app-shell.dark .inspector-title {
   color: #d7deea;
 }
 
@@ -851,6 +1080,81 @@ label.menu-item {
 }
 
 .app-shell.dark .inspector-reset-transform:hover {
+  background: #2a313a;
+}
+
+.app-shell.dark .settings-panel-title {
+  color: #d6deea;
+}
+
+.app-shell.dark .settings-panel-subtitle {
+  color: #9fb0c5;
+}
+
+.app-shell.dark .settings-panel-reset {
+  border-color: #454d57;
+  background: #1f242b;
+  color: #d6deea;
+}
+
+.app-shell.dark .settings-panel-reset:hover {
+  background: #2a313a;
+}
+
+.app-shell.dark .settings-section {
+  border-color: #404a56;
+  background: #232931;
+}
+
+.app-shell.dark .settings-section-title,
+.app-shell.dark .settings-field-label,
+.app-shell.dark .settings-checkbox {
+  color: #d6deea;
+}
+
+.app-shell.dark .settings-section-description,
+.app-shell.dark .settings-field-description,
+.app-shell.dark .settings-range output {
+  color: #98a9bf;
+}
+
+.app-shell.dark .settings-select,
+.app-shell.dark .settings-text,
+.app-shell.dark .settings-number {
+  border-color: #454d57;
+  background: #1f242b;
+  color: #d6deea;
+}
+
+.app-shell.dark .settings-popover-backdrop {
+  background: rgba(6, 9, 14, 0.48);
+}
+
+.app-shell.dark .settings-popover {
+  border-color: rgba(74, 92, 113, 0.82);
+  background: rgba(24, 29, 35, 0.97);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+}
+
+.app-shell.dark .settings-popover-chrome {
+  border-bottom-color: #39424d;
+}
+
+.app-shell.dark .settings-popover-title {
+  color: #d8e7f7;
+}
+
+.app-shell.dark .settings-popover-subtitle {
+  color: #9fb0c5;
+}
+
+.app-shell.dark .settings-popover-close {
+  border-color: #454d57;
+  background: #1f242b;
+  color: #d6deea;
+}
+
+.app-shell.dark .settings-popover-close:hover {
   background: #2a313a;
 }
 
@@ -1853,6 +2157,28 @@ label.menu-item {
     position: static;
     margin-top: 6px;
     box-shadow: none;
+  }
+
+  .settings-panel-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-popover-backdrop {
+    padding: 14px;
+  }
+
+  .settings-popover {
+    max-height: calc(100vh - 28px);
+  }
+
+  .settings-popover-chrome {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-popover-body {
+    padding: 16px;
   }
 
   .inspector-sidebar {

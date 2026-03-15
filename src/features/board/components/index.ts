@@ -12,5 +12,7 @@ export { default as NodeSelectionFx } from "./NodeSelectionFx";
 export { default as NoteBody } from "./NoteBody";
 export { default as SeekPanel } from "./SeekPanel";
 export { default as SelectionMarquee } from "./SelectionMarquee";
+export { default as SettingsPanel } from "./SettingsPanel";
+export { default as SettingsPopover } from "./SettingsPopover";
 export { default as ShaderSurface } from "./ShaderSurface";
 export { default as ShaderSandbox } from "./ShaderSandbox";

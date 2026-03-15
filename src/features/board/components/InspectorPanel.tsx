@@ -297,7 +297,9 @@ function InspectorPanel({
   if (!selectedNode) {
     return (
       <aside className="inspector-sidebar">
-        <div className="inspector-header">Inspector</div>
+        <div className="inspector-header">
+          <div className="inspector-title">Inspector</div>
+        </div>
         <div className="inspector-body">
           <div className="inspector-empty">Select a node to inspect it.</div>
           <InspectorHistoryPanel historyEntries={historyEntries} />
@@ -323,7 +325,9 @@ function InspectorPanel({
 
   return (
     <aside className="inspector-sidebar">
-      <div className="inspector-header">Inspector</div>
+      <div className="inspector-header">
+        <div className="inspector-title">Inspector</div>
+      </div>
       <div className="inspector-body">
         <div className="inspector-preview">
           {selectedNode.mediaKind === "note" ? (
