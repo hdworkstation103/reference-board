@@ -252,6 +252,28 @@
   cursor: pointer;
 }
 
+.menu-subgroup {
+  position: relative;
+}
+
+.menu-item-submenu-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.menu-item-hint {
+  font-size: 11px;
+  color: #6d7e90;
+}
+
+.menu-subpanel {
+  top: -8px;
+  left: calc(100% + 8px);
+}
+
 label.menu-item {
   display: block;
 }
@@ -719,6 +741,10 @@ label.menu-item {
 
 .app-shell.dark .menu-item {
   color: #d2d2d2;
+}
+
+.app-shell.dark .menu-item-hint {
+  color: #95a5b8;
 }
 
 .app-shell.dark .menu-item:hover {

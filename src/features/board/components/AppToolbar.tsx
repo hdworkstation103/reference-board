@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import type { BackgroundShaderOption } from '../shaders'
 
 type AppToolbarProps = {
+  backgroundShaderOptions: readonly BackgroundShaderOption[]
+  currentBackgroundShaderId: string
   darkMode: boolean
   imageCount: number
   enableSelectionShader: boolean
@@ -12,12 +15,15 @@ type AppToolbarProps = {
   onLoadVersion: (files: FileList | null) => void
   onCenterView: () => void
   onClearBoard: () => void
+  onSelectBackgroundShader: (id: string) => void
   onToggleDarkMode: () => void
   onToggleShaderCompositing: () => void
   onToggleShaderSandbox: () => void
 }
 
 function AppToolbar({
+  backgroundShaderOptions,
+  currentBackgroundShaderId,
   darkMode,
   imageCount,
   enableSelectionShader,
@@ -29,11 +35,13 @@ function AppToolbar({
   onLoadVersion,
   onCenterView,
   onClearBoard,
+  onSelectBackgroundShader,
   onToggleDarkMode,
   onToggleShaderCompositing,
   onToggleShaderSandbox,
 }: AppToolbarProps) {
   const [openMenu, setOpenMenu] = useState<'file' | 'view' | null>(null)
+  const [openSubmenu, setOpenSubmenu] = useState<'bg-shaders' | null>(null)
   const navRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
@@ -59,6 +67,12 @@ function AppToolbar({
     return () => {
       window.removeEventListener('pointerdown', handlePointerDown, true)
       window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [openMenu])
+
+  useEffect(() => {
+    if (openMenu !== 'view') {
+      setOpenSubmenu(null)
     }
   }, [openMenu])
 
@@ -167,6 +181,44 @@ function AppToolbar({
             }}>
               {shaderCompositingEnabled ? 'Disable Shader Compositing' : 'Enable Shader Compositing'}
             </button>
+            <div className={`menu-subgroup ${openSubmenu === 'bg-shaders' ? 'open' : ''}`}>
+              <button
+                type="button"
+                className="menu-item menu-item-submenu-trigger"
+                aria-expanded={openSubmenu === 'bg-shaders'}
+                aria-haspopup="menu"
+                onClick={() => {
+                  setOpenSubmenu((current) =>
+                    current === 'bg-shaders' ? null : 'bg-shaders',
+                  )
+                }}
+              >
+                <span>Shaders (BG)</span>
+                <span className="menu-item-hint">
+                  {backgroundShaderOptions.find((option) => option.id === currentBackgroundShaderId)?.label ?? 'Unknown'}
+                </span>
+              </button>
+              {openSubmenu === 'bg-shaders' && (
+                <div className="menu-panel menu-subpanel" role="menu" aria-label="Background shaders">
+                  {backgroundShaderOptions.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className="menu-item"
+                      onClick={() => {
+                        setOpenSubmenu(null)
+                        setOpenMenu(null)
+                        onSelectBackgroundShader(option.id)
+                      }}
+                    >
+                      {option.id === currentBackgroundShaderId
+                        ? `${option.label} [Current]`
+                        : option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button type="button" className="menu-item" onClick={() => {
               setOpenMenu(null)
               onToggleShaderSandbox()
@@ -180,6 +232,9 @@ function AppToolbar({
 
       <div className="toolbar-meta">
         <span className="meta">{imageCount} image(s)</span>
+        <span className="meta">
+          Background: {backgroundShaderOptions.find((option) => option.id === currentBackgroundShaderId)?.label ?? 'Unknown'}
+        </span>
         <span className="meta">Selection FX: {enableSelectionShader ? 'Shader' : 'Fallback'}</span>
       </div>
     </header>

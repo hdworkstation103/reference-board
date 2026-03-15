@@ -1,4 +1,5 @@
 import type { DragEventHandler, PointerEventHandler, ReactNode, RefObject } from 'react'
+import type { BackgroundShaderOption } from '../shaders'
 import BoardBackgroundShader from './BoardBackgroundShader'
 
 type BoardViewportProps = {
@@ -6,6 +7,7 @@ type BoardViewportProps = {
   boardWrapRef: RefObject<HTMLDivElement | null>
   boardWidth: number
   boardHeight: number
+  backgroundShader: BackgroundShaderOption
   darkMode: boolean
   isPanning: boolean
   isScaleMode: boolean
@@ -28,6 +30,7 @@ function BoardViewport({
   boardWrapRef,
   boardWidth,
   boardHeight,
+  backgroundShader,
   darkMode,
   isPanning,
   isScaleMode,
@@ -76,6 +79,7 @@ function BoardViewport({
           boardWrapRef={boardWrapRef}
           darkMode={darkMode}
           enabled={shaderCompositingEnabled}
+          shader={backgroundShader}
         />
         {children}
       </div>

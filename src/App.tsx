@@ -11,15 +11,18 @@ import type { CSSProperties } from "react";
 import {
   AppToolbar,
   applyActiveMediaFromItems,
+  BACKGROUND_SHADER_OPTIONS,
   BoardNode,
   BoardViewport,
   buildSnapshot,
   clearPersistedBoardSnapshot,
   ContextMenu,
   createMediaItemFromFile,
+  DEFAULT_BACKGROUND_SHADER_ID,
   extractDropSourceUrls,
   fileToDataUrl,
   FrameNode,
+  getBackgroundShaderOption,
   getFrameBounds,
   getGroupBounds,
   getItemHeight,
@@ -143,6 +146,12 @@ function App() {
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [enableSelectionShader, setEnableSelectionShader] = useState(true);
   const [shaderCompositingEnabled, setShaderCompositingEnabled] = useState(true);
+  const [backgroundShaderId, setBackgroundShaderId] = useState(() =>
+    getBackgroundShaderOption(
+      window.localStorage.getItem("reference-board-background-shader") ??
+        DEFAULT_BACKGROUND_SHADER_ID,
+    ).id,
+  );
   const [showShaderSandbox, setShowShaderSandbox] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(300);
   const [inspectorResize, setInspectorResize] = useState<{
@@ -399,6 +408,10 @@ function App() {
         "--shader-composite-opacity": shaderCompositingEnabled ? 1 : 0,
       }) as CSSProperties,
     [shaderCompositingEnabled],
+  );
+  const backgroundShader = useMemo(
+    () => getBackgroundShaderOption(backgroundShaderId),
+    [backgroundShaderId],
   );
 
   const getMediaTransformForNode = (id: number) =>
@@ -1224,6 +1237,13 @@ function App() {
       darkMode ? "dark" : "light",
     );
   }, [darkMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "reference-board-background-shader",
+      backgroundShader.id,
+    );
+  }, [backgroundShader.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3602,6 +3622,8 @@ function App() {
       style={appShellStyle}
     >
       <AppToolbar
+        backgroundShaderOptions={BACKGROUND_SHADER_OPTIONS}
+        currentBackgroundShaderId={backgroundShader.id}
         darkMode={darkMode}
         imageCount={images.length}
         enableSelectionShader={enableSelectionShader}
@@ -3617,6 +3639,7 @@ function App() {
         }}
         onCenterView={centerView}
         onClearBoard={clearBoard}
+        onSelectBackgroundShader={setBackgroundShaderId}
         onToggleDarkMode={() => {
           setDarkMode((current) => !current);
         }}
@@ -3636,6 +3659,7 @@ function App() {
           boardWrapRef={boardWrapRef}
           boardWidth={WORLD_SIZE}
           boardHeight={WORLD_SIZE}
+          backgroundShader={backgroundShader}
           darkMode={darkMode}
           isPanning={Boolean(pan)}
           isScaleMode={Boolean(scaleMode)}
