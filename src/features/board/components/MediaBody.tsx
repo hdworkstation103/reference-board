@@ -10,6 +10,7 @@ type MediaBodyProps = {
   displayImageSrc: string
   shouldUseBlurBg: boolean
   setVideoRef: (element: HTMLVideoElement | null) => void
+  setImageRef: (element: HTMLImageElement | null) => void
   onVideoLoadedMetadata: React.ReactEventHandler<HTMLVideoElement>
   onVideoTimeUpdate: React.ReactEventHandler<HTMLVideoElement>
   onVideoError: () => void
@@ -26,6 +27,7 @@ function MediaBody({
   displayImageSrc,
   shouldUseBlurBg,
   setVideoRef,
+  setImageRef,
   onVideoLoadedMetadata,
   onVideoTimeUpdate,
   onVideoError,
@@ -81,6 +83,7 @@ function MediaBody({
         src={displayImageSrc}
         alt={image.name}
         draggable={false}
+        ref={setImageRef}
         style={{
           transform: mediaTransformCss,
           transformOrigin: mediaTransformOrigin,

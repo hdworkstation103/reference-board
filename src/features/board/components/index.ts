@@ -18,3 +18,4 @@ export { default as SettingsPanel } from "./SettingsPanel";
 export { default as SettingsPopover } from "./SettingsPopover";
 export { default as ShaderSurface } from "./ShaderSurface";
 export { default as ShaderSandbox } from "./ShaderSandbox";
+export { default as TexturePreviewSurface } from "./TexturePreviewSurface";

@@ -213,11 +213,14 @@ function App() {
     Record<number, { decoder: GifDecoderLike; frameCount: number }>
   >({});
   const groupFadeTimeoutRef = useRef<number | null>(null);
+  const imageRefs = useRef<Record<number, HTMLImageElement | null>>({});
+  const nodeOutputCanvasesRef = useRef<Record<number, HTMLCanvasElement>>({});
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
   const pendingVideoSeekRef = useRef<Record<number, number>>({});
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const keyStateRef = useRef({ shift: false });
   const slideshowTimersRef = useRef<Record<number, number>>({});
+  const [outputSurfaceVersion, setOutputSurfaceVersion] = useState(0);
   const documentRef = useRef<BoardDocument>({
     images: [],
     frames: [],
@@ -529,17 +532,13 @@ function App() {
     }),
     [previewMediaHeight, previewNode],
   );
-  const previewDisplaySrc =
-    previewSource?.isGif && previewSource.paused && previewSource.gifFreezeSrc
-      ? previewSource.gifFreezeSrc
-      : previewSource?.src ?? "";
-  const previewShouldUseBlurBg =
-    previewSource?.mediaKind === "image" &&
-    !previewSource.isGif &&
-    (previewSource.mediaItems?.length ?? 0) > 1;
-  const previewTransformSettings = previewSource
-    ? getMediaTransformForNode(previewSource.id)
-    : DEFAULT_MEDIA_TRANSFORM;
+  const previewSourceCanvas = useMemo(
+    () =>
+      previewSourceId !== null
+        ? nodeOutputCanvasesRef.current[previewSourceId] ?? null
+        : null,
+    [outputSurfaceVersion, previewSourceId],
+  );
   const previewNodeZIndex = useMemo(
     () => Math.max(...images.map((item) => item.z), 0) + 1,
     [images],
@@ -598,6 +597,117 @@ function App() {
     previewSourceId,
     wireDraft,
   ]);
+
+  const getConnectedOutputNodeIds = () =>
+    previewSourceId !== null ? [previewSourceId] : [];
+
+  const ensureNodeOutputCanvas = (nodeId: number, width: number, height: number) => {
+    const nextWidth = Math.max(1, Math.round(width));
+    const nextHeight = Math.max(1, Math.round(height));
+    let canvas = nodeOutputCanvasesRef.current[nodeId];
+    let didChange = false;
+
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      nodeOutputCanvasesRef.current[nodeId] = canvas;
+      didChange = true;
+    }
+
+    if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+      canvas.width = nextWidth;
+      canvas.height = nextHeight;
+      didChange = true;
+    }
+
+    if (didChange) {
+      setOutputSurfaceVersion((current) => current + 1);
+    }
+
+    return canvas;
+  };
+
+  const renderNodeOutputSurface = (node: BoardImage) => {
+    if (node.mediaKind === "note") {
+      return false;
+    }
+
+    const sourceElement =
+      node.mediaKind === "video"
+        ? videoRefs.current[node.id]
+        : imageRefs.current[node.id];
+    if (!sourceElement) {
+      return false;
+    }
+
+    const sourceWidth =
+      node.mediaKind === "video"
+        ? (sourceElement as HTMLVideoElement).videoWidth
+        : (sourceElement as HTMLImageElement).naturalWidth;
+    const sourceHeight =
+      node.mediaKind === "video"
+        ? (sourceElement as HTMLVideoElement).videoHeight
+        : (sourceElement as HTMLImageElement).naturalHeight;
+    if (!sourceWidth || !sourceHeight) {
+      return false;
+    }
+
+    const outputWidth = Math.max(1, Math.round(node.width));
+    const outputHeight = Math.max(1, Math.round(node.width * node.aspect));
+    const canvas = ensureNodeOutputCanvas(node.id, outputWidth, outputHeight);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return false;
+    }
+
+    const settings = getMediaTransformForNode(node.id);
+    const isMediaStack = (node.mediaItems?.length ?? 0) > 1;
+    const shouldUseBlurBg =
+      isMediaStack && node.mediaKind === "image" && !node.isGif;
+    const fitMode = isMediaStack && node.mediaKind === "image" ? "contain" : "cover";
+    const fitScale =
+      fitMode === "contain"
+        ? Math.min(outputWidth / sourceWidth, outputHeight / sourceHeight)
+        : Math.max(outputWidth / sourceWidth, outputHeight / sourceHeight);
+    const drawWidth = sourceWidth * fitScale;
+    const drawHeight = sourceHeight * fitScale;
+    const drawX = (outputWidth - drawWidth) / 2;
+    const drawY = (outputHeight - drawHeight) / 2;
+    const pivotX = outputWidth * (settings.pivotX / 100);
+    const pivotY = outputHeight * (settings.pivotY / 100);
+
+    ctx.clearRect(0, 0, outputWidth, outputHeight);
+
+    if (shouldUseBlurBg) {
+      ctx.save();
+      ctx.filter = "blur(20px) brightness(0.68) saturate(0.92)";
+      ctx.drawImage(
+        sourceElement,
+        -outputWidth * 0.04,
+        -outputHeight * 0.04,
+        outputWidth * 1.08,
+        outputHeight * 1.08,
+      );
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.fillStyle = "#f4f7fa";
+      ctx.fillRect(0, 0, outputWidth, outputHeight);
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.translate(pivotX + settings.translateX, pivotY + settings.translateY);
+    ctx.rotate((settings.rotateDeg * Math.PI) / 180);
+    ctx.scale(
+      settings.flipHorizontal ? -settings.scaleX : settings.scaleX,
+      settings.scaleY,
+    );
+    ctx.translate(-pivotX, -pivotY);
+    ctx.drawImage(sourceElement, drawX, drawY, drawWidth, drawHeight);
+    ctx.restore();
+
+    return true;
+  };
 
   const updateSelectedNodeTransform = (
     patch: Partial<MediaTransformSettings>,
@@ -2144,6 +2254,67 @@ function App() {
       setPreviewSourceId(null);
     }
   }, [images, previewSourceId]);
+
+  useEffect(() => {
+    const validIds = new Set(images.map((item) => item.id));
+    let didChange = false;
+
+    for (const key of Object.keys(nodeOutputCanvasesRef.current)) {
+      const id = Number(key);
+      if (validIds.has(id)) {
+        continue;
+      }
+
+      delete nodeOutputCanvasesRef.current[id];
+      didChange = true;
+    }
+
+    if (didChange) {
+      setOutputSurfaceVersion((current) => current + 1);
+    }
+  }, [images]);
+
+  useEffect(() => {
+    const connectedNodeIds = getConnectedOutputNodeIds();
+    if (connectedNodeIds.length === 0) {
+      return;
+    }
+
+    let frameId = 0;
+    let cancelled = false;
+
+    const renderOutputs = () => {
+      let shouldAnimate = false;
+
+      for (const nodeId of connectedNodeIds) {
+        const node = images.find(
+          (item) => item.id === nodeId && item.mediaKind !== "note",
+        );
+        if (!node) {
+          continue;
+        }
+
+        const rendered = renderNodeOutputSurface(node);
+        if (
+          rendered &&
+          (node.mediaKind === "video" || (node.isGif && !node.paused))
+        ) {
+          shouldAnimate = true;
+        }
+      }
+
+      if (!cancelled && shouldAnimate) {
+        frameId = window.requestAnimationFrame(renderOutputs);
+      }
+    };
+
+    renderOutputs();
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [images, previewSourceId, activeMediaTransforms]);
 
   useEffect(() => {
     const activeGroupIds = selectedIds.filter((id) =>
@@ -4130,14 +4301,8 @@ function App() {
             aspect={previewAspect}
             zIndex={previewNodeZIndex}
             sourceImage={previewSource}
-            displaySrc={previewDisplaySrc}
-            mediaTransformCss={getTransformCss(previewTransformSettings)}
-            mediaTransformOrigin={getTransformOrigin(previewTransformSettings)}
-            shouldUseBlurBg={Boolean(previewShouldUseBlurBg)}
+            sourceCanvas={previewSourceCanvas}
             isDropTarget={Boolean(wireDraft)}
-            videoCurrentTime={
-              previewSource ? videoTimelines[previewSource.id]?.current : undefined
-            }
             onPointerDown={onPreviewNodePointerDown}
           />
 
@@ -4204,6 +4369,9 @@ function App() {
                 setVideoRef={(id, element) => {
                   videoRefs.current[id] = element;
                 }}
+                setImageRef={(id, element) => {
+                  imageRefs.current[id] = element;
+                }}
                 onVideoLoadedMetadata={(id, event) => {
                   setBrokenMediaIds((current) => {
                     if (!current[id]) {
@@ -4229,6 +4397,13 @@ function App() {
                       Math.min(pendingSeekTime, safeDuration),
                     );
                     delete pendingVideoSeekRef.current[id];
+                  }
+
+                  const outputNode = images.find(
+                    (item) => item.id === id && item.mediaKind !== "note",
+                  );
+                  if (outputNode) {
+                    renderNodeOutputSurface(outputNode);
                   }
 
                   const nextAspect = videoEl.videoHeight / videoEl.videoWidth;
@@ -4288,6 +4463,13 @@ function App() {
                       [id]: nextValue,
                     };
                   });
+
+                  const outputNode = images.find(
+                    (item) => item.id === id && item.mediaKind !== "note",
+                  );
+                  if (outputNode) {
+                    renderNodeOutputSurface(outputNode);
+                  }
                 }}
                 onMediaError={(id) => {
                   fallbackNodeMediaToEmbeddedData(id);
@@ -4306,6 +4488,13 @@ function App() {
                   const imgEl = event.currentTarget;
                   if (!imgEl.naturalWidth || !imgEl.naturalHeight) {
                     return;
+                  }
+
+                  const outputNode = images.find(
+                    (item) => item.id === id && item.mediaKind !== "note",
+                  );
+                  if (outputNode) {
+                    renderNodeOutputSurface(outputNode);
                   }
 
                   const nextAspect = imgEl.naturalHeight / imgEl.naturalWidth;
@@ -4366,6 +4555,13 @@ function App() {
                       duration: current[id]?.duration ?? video?.duration ?? 0,
                     },
                   }));
+
+                  const outputNode = images.find(
+                    (item) => item.id === id && item.mediaKind !== "note",
+                  );
+                  if (outputNode) {
+                    renderNodeOutputSurface(outputNode);
+                  }
                 }}
                 onSeekGif={onGifSeek}
               />
