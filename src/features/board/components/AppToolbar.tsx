@@ -1,22 +1,34 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from "react";
+import type { BackgroundShaderOption } from "../shaders";
 
 type AppToolbarProps = {
-  imageCount: number
-  enableSelectionShader: boolean
-  shaderSandboxOpen: boolean
-  onAddFiles: (files: FileList | null) => void
-  onSaveVersion: () => void
-  onAddNote: () => void
-  onLoadVersion: (files: FileList | null) => void
-  onCenterView: () => void
-  onClearBoard: () => void
-  onOpenSettings: () => void
-  onToggleShaderSandbox: () => void
-}
+  backgroundShaderOptions: readonly BackgroundShaderOption[];
+  currentBackgroundShaderId: string;
+  darkMode: boolean;
+  imageCount: number;
+  enableSelectionShader: boolean;
+  shaderCompositingEnabled: boolean;
+  shaderSandboxOpen: boolean;
+  onAddFiles: (files: FileList | null) => void;
+  onSaveVersion: () => void;
+  onAddNote: () => void;
+  onLoadVersion: (files: FileList | null) => void;
+  onCenterView: () => void;
+  onClearBoard: () => void;
+  onOpenSettings: () => void;
+  onSelectBackgroundShader: (id: string) => void;
+  onToggleDarkMode: () => void;
+  onToggleShaderCompositing: () => void;
+  onToggleShaderSandbox: () => void;
+};
 
 function AppToolbar({
+  backgroundShaderOptions,
+  currentBackgroundShaderId,
+  darkMode,
   imageCount,
   enableSelectionShader,
+  shaderCompositingEnabled,
   shaderSandboxOpen,
   onAddFiles,
   onSaveVersion,
@@ -25,36 +37,46 @@ function AppToolbar({
   onCenterView,
   onClearBoard,
   onOpenSettings,
+  onSelectBackgroundShader,
+  onToggleDarkMode,
+  onToggleShaderCompositing,
   onToggleShaderSandbox,
 }: AppToolbarProps) {
-  const [openMenu, setOpenMenu] = useState<'file' | 'view' | null>(null)
-  const navRef = useRef<HTMLElement | null>(null)
+  const [openMenu, setOpenMenu] = useState<"file" | "view" | null>(null);
+  const [openSubmenu, setOpenSubmenu] = useState<"bg-shaders" | null>(null);
+  const navRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!openMenu) {
-      return
+      return;
     }
 
     const handlePointerDown = (event: PointerEvent) => {
       if (navRef.current?.contains(event.target as Node)) {
-        return
+        return;
       }
-      setOpenMenu(null)
-    }
+      setOpenSubmenu(null);
+      setOpenMenu(null);
+    };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpenMenu(null)
+      if (event.key === "Escape") {
+        setOpenSubmenu(null);
+        setOpenMenu(null);
       }
-    }
+    };
 
-    window.addEventListener('pointerdown', handlePointerDown, true)
-    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener('pointerdown', handlePointerDown, true)
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [openMenu])
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openMenu]);
+
+  const currentBackgroundLabel =
+    backgroundShaderOptions.find((option) => option.id === currentBackgroundShaderId)
+      ?.label ?? "Unknown";
 
   return (
     <header className="toolbar">
@@ -64,8 +86,8 @@ function AppToolbar({
         accept="image/*,video/*"
         multiple
         onChange={(event) => {
-          onAddFiles(event.target.files)
-          event.currentTarget.value = ''
+          onAddFiles(event.target.files);
+          event.currentTarget.value = "";
         }}
       />
       <input
@@ -73,8 +95,8 @@ function AppToolbar({
         type="file"
         accept="application/json,.json"
         onChange={(event) => {
-          onLoadVersion(event.target.files)
-          event.currentTarget.value = ''
+          onLoadVersion(event.target.files);
+          event.currentTarget.value = "";
         }}
       />
 
@@ -83,84 +105,195 @@ function AppToolbar({
       </div>
 
       <nav ref={navRef} className="menu-bar" aria-label="Board menu">
-        <div className={`menu-group ${openMenu === 'file' ? 'open' : ''}`}>
+        <div className={`menu-group ${openMenu === "file" ? "open" : ""}`}>
           <button
             type="button"
             className="menu-trigger"
-            aria-expanded={openMenu === 'file'}
+            aria-expanded={openMenu === "file"}
             aria-haspopup="menu"
             onClick={() => {
-              setOpenMenu((current) => (current === 'file' ? null : 'file'))
+              setOpenSubmenu(null);
+              setOpenMenu((current) => (current === "file" ? null : "file"));
             }}
           >
             File
           </button>
-          {openMenu === 'file' && (
+          {openMenu === "file" && (
             <div className="menu-panel" role="menu" aria-label="File menu">
-            <label className="menu-item" htmlFor="image-picker" onClick={() => {
-              setOpenMenu(null)
-            }}>
-              Add Images
-            </label>
-            <button type="button" className="menu-item" onClick={() => {
-              setOpenMenu(null)
-              onOpenSettings()
-            }}>
-              Settings
-            </button>
-            <button type="button" className="menu-item" onClick={() => {
-              setOpenMenu(null)
-              onAddNote()
-            }}>
-              Add Note
-            </button>
-            <label className="menu-item" htmlFor="version-picker" onClick={() => {
-              setOpenMenu(null)
-            }}>
-              Load Canvas
-            </label>
-            <button type="button" className="menu-item" onClick={() => {
-              setOpenMenu(null)
-              onSaveVersion()
-            }}>
-              Save Canvas
-            </button>
-            <button type="button" className="menu-item danger" onClick={() => {
-              setOpenMenu(null)
-              onClearBoard()
-            }}>
-              Clear Board
-            </button>
+              <label
+                className="menu-item"
+                htmlFor="image-picker"
+                onClick={() => {
+                  setOpenMenu(null);
+                }}
+              >
+                Add Images
+              </label>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setOpenSubmenu(null);
+                  setOpenMenu(null);
+                  onOpenSettings();
+                }}
+              >
+                Settings
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setOpenSubmenu(null);
+                  setOpenMenu(null);
+                  onAddNote();
+                }}
+              >
+                Add Note
+              </button>
+              <label
+                className="menu-item"
+                htmlFor="version-picker"
+                onClick={() => {
+                  setOpenMenu(null);
+                }}
+              >
+                Load Canvas
+              </label>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setOpenSubmenu(null);
+                  setOpenMenu(null);
+                  onSaveVersion();
+                }}
+              >
+                Save Canvas
+              </button>
+              <button
+                type="button"
+                className="menu-item danger"
+                onClick={() => {
+                  setOpenSubmenu(null);
+                  setOpenMenu(null);
+                  onClearBoard();
+                }}
+              >
+                Clear Board
+              </button>
             </div>
           )}
         </div>
 
-        <div className={`menu-group ${openMenu === 'view' ? 'open' : ''}`}>
+        <div className={`menu-group ${openMenu === "view" ? "open" : ""}`}>
           <button
             type="button"
             className="menu-trigger"
-            aria-expanded={openMenu === 'view'}
+            aria-expanded={openMenu === "view"}
             aria-haspopup="menu"
             onClick={() => {
-              setOpenMenu((current) => (current === 'view' ? null : 'view'))
+              setOpenMenu((current) => {
+                const nextOpenMenu = current === "view" ? null : "view";
+                if (nextOpenMenu !== "view") {
+                  setOpenSubmenu(null);
+                }
+                return nextOpenMenu;
+              });
             }}
           >
             View
           </button>
-          {openMenu === 'view' && (
+          {openMenu === "view" && (
             <div className="menu-panel" role="menu" aria-label="View menu">
-            <button type="button" className="menu-item" onClick={() => {
-              setOpenMenu(null)
-              onCenterView()
-            }}>
-              Reset View
-            </button>
-            <button type="button" className="menu-item" onClick={() => {
-              setOpenMenu(null)
-              onToggleShaderSandbox()
-            }}>
-              {shaderSandboxOpen ? 'Close Shader Sandbox' : 'Open Shader Sandbox'}
-            </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setOpenSubmenu(null);
+                  setOpenMenu(null);
+                  onCenterView();
+                }}
+              >
+                Reset View
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setOpenSubmenu(null);
+                  setOpenMenu(null);
+                  onToggleDarkMode();
+                }}
+              >
+                {darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setOpenSubmenu(null);
+                  setOpenMenu(null);
+                  onToggleShaderCompositing();
+                }}
+              >
+                {shaderCompositingEnabled
+                  ? "Disable Shader Compositing"
+                  : "Enable Shader Compositing"}
+              </button>
+              <div
+                className={`menu-subgroup ${openSubmenu === "bg-shaders" ? "open" : ""}`}
+              >
+                <button
+                  type="button"
+                  className="menu-item menu-item-submenu-trigger"
+                  aria-expanded={openSubmenu === "bg-shaders"}
+                  aria-haspopup="menu"
+                  onClick={() => {
+                    setOpenSubmenu((current) =>
+                      current === "bg-shaders" ? null : "bg-shaders",
+                    );
+                  }}
+                >
+                  <span>Shaders (BG)</span>
+                  <span className="menu-item-hint">{currentBackgroundLabel}</span>
+                </button>
+                {openSubmenu === "bg-shaders" && (
+                  <div
+                    className="menu-panel menu-subpanel"
+                    role="menu"
+                    aria-label="Background shaders"
+                  >
+                    {backgroundShaderOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="menu-item"
+                        onClick={() => {
+                          setOpenSubmenu(null);
+                          setOpenMenu(null);
+                          onSelectBackgroundShader(option.id);
+                        }}
+                      >
+                        {option.id === currentBackgroundShaderId
+                          ? `${option.label} [Current]`
+                          : option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setOpenSubmenu(null);
+                  setOpenMenu(null);
+                  onToggleShaderSandbox();
+                }}
+              >
+                {shaderSandboxOpen ? "Close Shader Sandbox" : "Open Shader Sandbox"}
+              </button>
             </div>
           )}
         </div>
@@ -168,10 +301,13 @@ function AppToolbar({
 
       <div className="toolbar-meta">
         <span className="meta">{imageCount} image(s)</span>
-        <span className="meta">Selection FX: {enableSelectionShader ? 'Shader' : 'Fallback'}</span>
+        <span className="meta">Background: {currentBackgroundLabel}</span>
+        <span className="meta">
+          Selection FX: {enableSelectionShader ? "Shader" : "Fallback"}
+        </span>
       </div>
     </header>
-  )
+  );
 }
 
-export default AppToolbar
+export default AppToolbar;

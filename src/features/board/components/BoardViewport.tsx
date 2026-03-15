@@ -1,13 +1,18 @@
 import type { DragEventHandler, PointerEventHandler, ReactNode, RefObject } from 'react'
+import type { BackgroundShaderOption } from '../shaders'
+import BoardBackgroundShader from './BoardBackgroundShader'
 
 type BoardViewportProps = {
   boardRef: RefObject<HTMLDivElement | null>
   boardWrapRef: RefObject<HTMLDivElement | null>
   boardWidth: number
   boardHeight: number
+  backgroundShader: BackgroundShaderOption
+  darkMode: boolean
   isPanning: boolean
   isScaleMode: boolean
   isMoveMode: boolean
+  shaderCompositingEnabled: boolean
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
   onWrapPointerDown: PointerEventHandler<HTMLElement>
   onAuxClick: React.MouseEventHandler<HTMLElement>
@@ -25,9 +30,12 @@ function BoardViewport({
   boardWrapRef,
   boardWidth,
   boardHeight,
+  backgroundShader,
+  darkMode,
   isPanning,
   isScaleMode,
   isMoveMode,
+  shaderCompositingEnabled,
   onContextMenu,
   onWrapPointerDown,
   onAuxClick,
@@ -67,6 +75,12 @@ function BoardViewport({
         onPointerDown={onBoardPointerDown}
         style={{ width: `${boardWidth}px`, height: `${boardHeight}px` }}
       >
+        <BoardBackgroundShader
+          boardWrapRef={boardWrapRef}
+          darkMode={darkMode}
+          enabled={shaderCompositingEnabled}
+          shader={backgroundShader}
+        />
         {children}
       </div>
     </section>

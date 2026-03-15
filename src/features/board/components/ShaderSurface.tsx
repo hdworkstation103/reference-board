@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createShaderProgram, validateReactShaderSource } from "../utils";
 
 type ShaderSurfaceStatus = {
@@ -12,6 +12,7 @@ type ShaderSurfaceProps = {
   fs: string;
   className?: string;
   onStatusChange?: (status: ShaderSurfaceStatus) => void;
+  uniforms?: Record<string, number | readonly number[]>;
 };
 
 const FULLSCREEN_QUAD = new Float32Array([
@@ -21,14 +22,28 @@ const FULLSCREEN_QUAD = new Float32Array([
   1, 1,
 ]);
 
-function ShaderSurface({ fs, className, onStatusChange }: ShaderSurfaceProps) {
+function ShaderSurface({
+  fs,
+  className,
+  onStatusChange,
+  uniforms = {},
+}: ShaderSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const uniformsRef = useRef(uniforms);
   const [status, setStatus] = useState<ShaderSurfaceStatus>({
     ready: false,
     validationError: null,
     runtimeError: null,
     runtimeWarning: null,
   });
+  const uniformSignature = useMemo(
+    () => Object.keys(uniforms).sort().join("|"),
+    [uniforms],
+  );
+
+  useEffect(() => {
+    uniformsRef.current = uniforms;
+  }, [uniforms]);
 
   useEffect(() => {
     onStatusChange?.(status);
@@ -104,6 +119,12 @@ function ShaderSurface({ fs, className, onStatusChange }: ShaderSurfaceProps) {
     const positionLocation = gl.getAttribLocation(program, "aVertexPosition");
     const timeLocation = gl.getUniformLocation(program, "iTime");
     const resolutionLocation = gl.getUniformLocation(program, "iResolution");
+    const uniformLocations = new Map<string, WebGLUniformLocation | null>(
+      Object.keys(uniformsRef.current).map((name) => [
+        name,
+        gl.getUniformLocation(program, name),
+      ]),
+    );
 
     let frameId = 0;
     let startTime = 0;
@@ -155,6 +176,32 @@ function ShaderSurface({ fs, className, onStatusChange }: ShaderSurfaceProps) {
       if (resolutionLocation) {
         gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
       }
+      for (const [name, location] of uniformLocations) {
+        if (!location) {
+          continue;
+        }
+
+        const value = uniformsRef.current[name];
+        if (typeof value === "number") {
+          gl.uniform1f(location, value);
+          continue;
+        }
+
+        switch (value.length) {
+          case 1:
+            gl.uniform1f(location, value[0]);
+            break;
+          case 2:
+            gl.uniform2f(location, value[0], value[1]);
+            break;
+          case 3:
+            gl.uniform3f(location, value[0], value[1], value[2]);
+            break;
+          default:
+            gl.uniform4f(location, value[0], value[1], value[2], value[3]);
+            break;
+        }
+      }
 
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       frameId = window.requestAnimationFrame(render);
@@ -180,7 +227,7 @@ function ShaderSurface({ fs, className, onStatusChange }: ShaderSurfaceProps) {
         gl.deleteShader(fragmentShader);
       }
     };
-  }, [fs]);
+  }, [fs, uniformSignature]);
 
   return <canvas ref={canvasRef} className={className} aria-hidden="true" />;
 }

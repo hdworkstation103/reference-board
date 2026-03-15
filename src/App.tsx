@@ -11,6 +11,7 @@ import type { CSSProperties } from "react";
 import {
   AppToolbar,
   applyActiveMediaFromItems,
+  BACKGROUND_SHADER_OPTIONS,
   BoardNode,
   BoardViewport,
   boardSettingsStore,
@@ -18,9 +19,11 @@ import {
   clearPersistedBoardSnapshot,
   ContextMenu,
   createMediaItemFromFile,
+  DEFAULT_BACKGROUND_SHADER_ID,
   extractDropSourceUrls,
   fileToDataUrl,
   FrameNode,
+  getBackgroundShaderOption,
   getFrameBounds,
   getGroupBounds,
   getItemHeight,
@@ -160,6 +163,12 @@ function App() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [settingsPopoverOpen, setSettingsPopoverOpen] = useState(false);
+  const [backgroundShaderId, setBackgroundShaderId] = useState(() =>
+    getBackgroundShaderOption(
+      window.localStorage.getItem("reference-board-background-shader") ??
+        DEFAULT_BACKGROUND_SHADER_ID,
+    ).id,
+  );
   const [inspectorResize, setInspectorResize] = useState<{
     startX: number;
     startWidth: number;
@@ -414,6 +423,10 @@ function App() {
         "--shader-composite-opacity": shaderCompositingEnabled ? 1 : 0,
       }) as CSSProperties,
     [shaderCompositingEnabled],
+  );
+  const backgroundShader = useMemo(
+    () => getBackgroundShaderOption(backgroundShaderId),
+    [backgroundShaderId],
   );
 
   const getMediaTransformForNode = (id: number) =>
@@ -1232,6 +1245,13 @@ function App() {
       applyMoveMode();
     }
   };
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "reference-board-background-shader",
+      backgroundShader.id,
+    );
+  }, [backgroundShader.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3610,8 +3630,12 @@ function App() {
       style={appShellStyle}
     >
       <AppToolbar
+        backgroundShaderOptions={BACKGROUND_SHADER_OPTIONS}
+        currentBackgroundShaderId={backgroundShader.id}
+        darkMode={darkMode}
         imageCount={images.length}
         enableSelectionShader={enableSelectionShader}
+        shaderCompositingEnabled={shaderCompositingEnabled}
         shaderSandboxOpen={showShaderSandbox}
         onAddFiles={(files) => {
           void handleFiles(files);
@@ -3625,6 +3649,13 @@ function App() {
         onClearBoard={clearBoard}
         onOpenSettings={() => {
           setSettingsPopoverOpen(true);
+        }}
+        onSelectBackgroundShader={setBackgroundShaderId}
+        onToggleDarkMode={() => {
+          toggleBoardSettingValue(DARK_MODE_SETTING_ID);
+        }}
+        onToggleShaderCompositing={() => {
+          toggleBoardSettingValue(SHADER_COMPOSITING_SETTING_ID);
         }}
         onToggleShaderSandbox={() => {
           toggleBoardSettingValue(SHADER_SANDBOX_SETTING_ID);
@@ -3645,9 +3676,12 @@ function App() {
           boardWrapRef={boardWrapRef}
           boardWidth={WORLD_SIZE}
           boardHeight={WORLD_SIZE}
+          backgroundShader={backgroundShader}
+          darkMode={darkMode}
           isPanning={Boolean(pan)}
           isScaleMode={Boolean(scaleMode)}
           isMoveMode={Boolean(moveMode)}
+          shaderCompositingEnabled={shaderCompositingEnabled}
           onContextMenu={(event) => {
             event.preventDefault();
 
