@@ -77,6 +77,7 @@ import type {
   MarqueeState,
   HistoryEntry,
   HistoryVisibilityPriority,
+  GraphNodeInstance,
   MediaTransformSettings,
   MediaTimeline,
   MoveModeState,
@@ -136,14 +137,7 @@ const BRIGHTNESS_NODE_BODY_HEIGHT = 146;
 const BRIGHTNESS_DEFAULT_VALUE = 1.35;
 const PREVIEW_NODE_WIDTH = 240;
 const PREVIEW_NODE_EMPTY_ASPECT = 0.62;
-const BRIGHTNESS_GRAPH_NODE_ID = "brightness:1";
-const PREVIEW_GRAPH_NODE_ID = "preview:1";
-
-type UtilityNodeState = {
-  x: number;
-  y: number;
-  width: number;
-};
+const DEFAULT_GRAPH_NODE_Z = 1;
 
 type FloatingNodeDragState = {
   nodeId: string;
@@ -158,6 +152,71 @@ type WireDraftState = {
   pointerX: number;
   pointerY: number;
 };
+
+const createGraphNodeId = (definitionId: string, id: number) =>
+  `${definitionId}:${id}`;
+
+const createGraphNodeInstance = (
+  definitionId: string,
+  id: number,
+  x: number,
+  y: number,
+  z: number,
+): GraphNodeInstance => {
+  switch (definitionId) {
+    case BRIGHTNESS_NODE_DEFINITION_ID:
+      return {
+        id: createGraphNodeId(definitionId, id),
+        definitionId,
+        x,
+        y,
+        width: BRIGHTNESS_NODE_WIDTH,
+        z,
+        params: { brightness: BRIGHTNESS_DEFAULT_VALUE },
+      };
+    case PREVIEW_NODE_DEFINITION_ID:
+      return {
+        id: createGraphNodeId(definitionId, id),
+        definitionId,
+        x,
+        y,
+        width: PREVIEW_NODE_WIDTH,
+        z,
+      };
+    default:
+      return {
+        id: createGraphNodeId(definitionId, id),
+        definitionId,
+        x,
+        y,
+        width: IMAGE_WIDTH,
+        z,
+      };
+  }
+};
+
+const createDefaultGraphNodes = (): GraphNodeInstance[] => [
+  createGraphNodeInstance(
+    BRIGHTNESS_NODE_DEFINITION_ID,
+    1,
+    START_X + 420,
+    START_Y + 52,
+    DEFAULT_GRAPH_NODE_Z,
+  ),
+  createGraphNodeInstance(
+    PREVIEW_NODE_DEFINITION_ID,
+    2,
+    START_X + 700,
+    START_Y + 40,
+    DEFAULT_GRAPH_NODE_Z + 1,
+  ),
+];
+
+const cloneGraphNodes = (graphNodes: GraphNodeInstance[]) =>
+  graphNodes.map((graphNode) => ({
+    ...graphNode,
+    params: graphNode.params ? { ...graphNode.params } : undefined,
+  }));
 
 function App() {
   const boardSettings = useBoardSettings();
@@ -204,6 +263,10 @@ function App() {
     Record<number, MediaTransformSettings>
   >({});
   const [frames, setFrames] = useState<BoardFrame[]>([]);
+  const [graphNodes, setGraphNodes] = useState<GraphNodeInstance[]>(
+    createDefaultGraphNodes,
+  );
+  const [connections, setConnections] = useState<GraphConnection[]>([]);
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [groupOverlay, setGroupOverlay] = useState<GroupOverlayState | null>(
@@ -216,28 +279,15 @@ function App() {
     startX: number;
     startWidth: number;
   } | null>(null);
-  const [brightnessNode, setBrightnessNode] = useState<UtilityNodeState>({
-    x: START_X + 420,
-    y: START_Y + 52,
-    width: BRIGHTNESS_NODE_WIDTH,
-  });
-  const [brightnessValue, setBrightnessValue] = useState(
-    BRIGHTNESS_DEFAULT_VALUE,
-  );
-  const [previewNode, setPreviewNode] = useState<UtilityNodeState>({
-    x: START_X + 700,
-    y: START_Y + 40,
-    width: PREVIEW_NODE_WIDTH,
-  });
   const [floatingNodeDrag, setFloatingNodeDrag] =
     useState<FloatingNodeDragState | null>(null);
-  const [connections, setConnections] = useState<GraphConnection[]>([]);
   const [wireDraft, setWireDraft] = useState<WireDraftState | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
   const nextIdRef = useRef(1);
   const nextConnectionIdRef = useRef(1);
   const nextFrameIdRef = useRef(1);
+  const nextGraphNodeIdRef = useRef(3);
   const nextHistoryIdRef = useRef(1);
   const nextZRef = useRef(1);
   const gifDecoderCacheRef = useRef<
@@ -255,6 +305,8 @@ function App() {
   const documentRef = useRef<BoardDocument>({
     images: [],
     frames: [],
+    graphNodes: createDefaultGraphNodes(),
+    connections: [],
     mediaTransforms: {},
     darkMode,
   });
@@ -332,10 +384,12 @@ function App() {
     () => ({
       images,
       frames,
+      graphNodes,
+      connections,
       mediaTransforms: activeMediaTransforms,
       darkMode,
     }),
-    [activeMediaTransforms, darkMode, frames, images],
+    [activeMediaTransforms, connections, darkMode, frames, graphNodes, images],
   );
   const selectedCollapsedFrame = useMemo(
     () =>
@@ -539,29 +593,11 @@ function App() {
     () => new Map(displayNodes.map((entry) => [entry.image.id, entry])),
     [displayNodes],
   );
-  const brightnessNodeDefinition = getNodeDefinition(
-    BRIGHTNESS_NODE_DEFINITION_ID,
+  const graphNodeById = useMemo(
+    () => new Map(graphNodes.map((graphNode) => [graphNode.id, graphNode])),
+    [graphNodes],
   );
-  const previewNodeDefinition = getNodeDefinition(PREVIEW_NODE_DEFINITION_ID);
   const mediaNodeDefinition = getNodeDefinition(MEDIA_NODE_DEFINITION_ID);
-  const brightnessInputConnection = useMemo(
-    () =>
-      resolveInputConnection(
-        connections,
-        BRIGHTNESS_GRAPH_NODE_ID,
-        BRIGHTNESS_INPUT_PORT_ID,
-      ),
-    [connections],
-  );
-  const previewConnection = useMemo(
-    () =>
-      resolveInputConnection(
-        connections,
-        PREVIEW_GRAPH_NODE_ID,
-        PREVIEW_INPUT_PORT_ID,
-      ),
-    [connections],
-  );
 
   const getGraphNodeLabel = (nodeId: string) => {
     const mediaId = parseMediaGraphNodeId(nodeId);
@@ -572,16 +608,21 @@ function App() {
       );
     }
 
-    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
-      return "Brightness";
+    const graphNode = graphNodeById.get(nodeId);
+    if (!graphNode) {
+      return nodeId;
     }
 
-    if (nodeId === PREVIEW_GRAPH_NODE_ID) {
-      return "Preview";
-    }
-
-    return nodeId;
+    return getNodeDefinition(graphNode.definitionId)?.label ?? graphNode.id;
   };
+
+  const getGraphNodeInputConnection = (nodeId: string, portId: string) =>
+    resolveInputConnection(connections, nodeId, portId);
+
+  const getBrightnessValue = (graphNode: GraphNodeInstance) =>
+    typeof graphNode.params?.brightness === "number"
+      ? graphNode.params.brightness
+      : BRIGHTNESS_DEFAULT_VALUE;
 
   const getGraphNodeOutputAspect = (
     nodeId: string,
@@ -606,10 +647,14 @@ function App() {
       );
     }
 
-    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
-      const inputConnection = resolveInputConnection(
-        connections,
-        BRIGHTNESS_GRAPH_NODE_ID,
+    const graphNode = graphNodeById.get(nodeId);
+    if (!graphNode) {
+      return PREVIEW_NODE_EMPTY_ASPECT;
+    }
+
+    if (graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID) {
+      const inputConnection = getGraphNodeInputConnection(
+        graphNode.id,
         BRIGHTNESS_INPUT_PORT_ID,
       );
       return inputConnection
@@ -620,64 +665,89 @@ function App() {
     return PREVIEW_NODE_EMPTY_ASPECT;
   };
 
-  const previewAspect = useMemo(
+  const utilityGraphNodes = useMemo(
     () =>
-      previewConnection
-        ? getGraphNodeOutputAspect(previewConnection.fromNodeId)
-        : PREVIEW_NODE_EMPTY_ASPECT,
-    [connections, images, outputSurfaceVersion, previewConnection],
+      [...graphNodes]
+        .filter((graphNode) => graphNode.definitionId !== MEDIA_NODE_DEFINITION_ID)
+        .sort((a, b) => a.z - b.z),
+    [graphNodes],
   );
-  const previewMediaHeight = previewNode.width * previewAspect;
-  const previewHeight =
-    previewMediaHeight + CAPTION_HEIGHT + CARD_BORDER_HEIGHT;
-  const brightnessHeight =
-    BRIGHTNESS_NODE_BODY_HEIGHT + CAPTION_HEIGHT + CARD_BORDER_HEIGHT;
-  const previewBounds = useMemo(
-    () => ({
-      left: previewNode.x,
-      top: previewNode.y,
-      right: previewNode.x + previewNode.width,
-      bottom: previewNode.y + previewHeight,
-    }),
-    [previewHeight, previewNode],
-  );
-  const brightnessBounds = useMemo(
-    () => ({
-      left: brightnessNode.x,
-      top: brightnessNode.y,
-      right: brightnessNode.x + brightnessNode.width,
-      bottom: brightnessNode.y + brightnessHeight,
-    }),
-    [brightnessHeight, brightnessNode],
-  );
-  const previewSourceLabel = previewConnection
-    ? getGraphNodeLabel(previewConnection.fromNodeId)
-    : null;
-  const brightnessSourceLabel = brightnessInputConnection
-    ? getGraphNodeLabel(brightnessInputConnection.fromNodeId)
-    : null;
-  const brightnessSourceCanvas = useMemo(
+  const previewNodes = useMemo(
     () =>
-      brightnessInputConnection
-        ? nodeOutputCanvasesRef.current[brightnessInputConnection.fromNodeId] ??
-          null
-        : null,
-    [brightnessInputConnection, outputSurfaceVersion],
+      utilityGraphNodes.filter(
+        (graphNode) => graphNode.definitionId === PREVIEW_NODE_DEFINITION_ID,
+      ),
+    [utilityGraphNodes],
   );
-  const brightnessOutputCanvas = useMemo(
-    () => nodeOutputCanvasesRef.current[BRIGHTNESS_GRAPH_NODE_ID] ?? null,
-    [outputSurfaceVersion],
-  );
-  const previewSourceCanvas = useMemo(
+  const brightnessNodes = useMemo(
     () =>
-      previewConnection
-        ? nodeOutputCanvasesRef.current[previewConnection.fromNodeId] ?? null
-        : null,
-    [outputSurfaceVersion, previewConnection],
+      utilityGraphNodes.filter(
+        (graphNode) => graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID,
+      ),
+    [utilityGraphNodes],
   );
-  const previewNodeZIndex = useMemo(
-    () => Math.max(...images.map((item) => item.z), 0) + 1,
-    [images],
+  const previewNodeViews = useMemo(
+    () =>
+      previewNodes.map((graphNode) => {
+        const inputConnection = getGraphNodeInputConnection(
+          graphNode.id,
+          PREVIEW_INPUT_PORT_ID,
+        );
+        const aspect = inputConnection
+          ? getGraphNodeOutputAspect(inputConnection.fromNodeId)
+          : PREVIEW_NODE_EMPTY_ASPECT;
+        const mediaHeight = graphNode.width * aspect;
+        const height = mediaHeight + CAPTION_HEIGHT + CARD_BORDER_HEIGHT;
+
+        return {
+          graphNode,
+          inputConnection,
+          aspect,
+          bounds: {
+            left: graphNode.x,
+            top: graphNode.y,
+            right: graphNode.x + graphNode.width,
+            bottom: graphNode.y + height,
+          },
+          sourceLabel: inputConnection
+            ? getGraphNodeLabel(inputConnection.fromNodeId)
+            : null,
+          sourceCanvas: inputConnection
+            ? nodeOutputCanvasesRef.current[inputConnection.fromNodeId] ?? null
+            : null,
+        };
+      }),
+    [connections, graphNodes, images, outputSurfaceVersion, previewNodes],
+  );
+  const brightnessNodeViews = useMemo(
+    () =>
+      brightnessNodes.map((graphNode) => {
+        const inputConnection = getGraphNodeInputConnection(
+          graphNode.id,
+          BRIGHTNESS_INPUT_PORT_ID,
+        );
+        const height = BRIGHTNESS_NODE_BODY_HEIGHT + CAPTION_HEIGHT + CARD_BORDER_HEIGHT;
+
+        return {
+          graphNode,
+          inputConnection,
+          brightness: getBrightnessValue(graphNode),
+          bounds: {
+            left: graphNode.x,
+            top: graphNode.y,
+            right: graphNode.x + graphNode.width,
+            bottom: graphNode.y + height,
+          },
+          sourceLabel: inputConnection
+            ? getGraphNodeLabel(inputConnection.fromNodeId)
+            : null,
+          sourceCanvas: inputConnection
+            ? nodeOutputCanvasesRef.current[inputConnection.fromNodeId] ?? null
+            : null,
+          outputCanvas: nodeOutputCanvasesRef.current[graphNode.id] ?? null,
+        };
+      }),
+    [brightnessNodes, connections, images, outputSurfaceVersion],
   );
 
   const getGraphNodeOutputAnchor = (nodeId: string) => {
@@ -697,10 +767,18 @@ function App() {
       };
     }
 
-    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
+    const graphNode = graphNodeById.get(nodeId);
+    if (!graphNode) {
+      return null;
+    }
+
+    if (graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID) {
       return {
-        x: brightnessNode.x + brightnessNode.width + 12 + WORLD_ORIGIN,
-        y: brightnessNode.y + brightnessHeight * 0.5 + WORLD_ORIGIN,
+        x: graphNode.x + graphNode.width + 12 + WORLD_ORIGIN,
+        y:
+          graphNode.y +
+          (BRIGHTNESS_NODE_BODY_HEIGHT + CAPTION_HEIGHT + CARD_BORDER_HEIGHT) * 0.5 +
+          WORLD_ORIGIN,
       };
     }
 
@@ -708,20 +786,41 @@ function App() {
   };
 
   const getGraphNodeInputAnchor = (nodeId: string, portId: string) => {
+    const graphNode = graphNodeById.get(nodeId);
+    if (!graphNode) {
+      return null;
+    }
+
     if (
-      nodeId === BRIGHTNESS_GRAPH_NODE_ID &&
+      graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID &&
       portId === BRIGHTNESS_INPUT_PORT_ID
     ) {
       return {
-        x: brightnessNode.x - 12 + WORLD_ORIGIN,
-        y: brightnessNode.y + brightnessHeight * 0.5 + WORLD_ORIGIN,
+        x: graphNode.x - 12 + WORLD_ORIGIN,
+        y:
+          graphNode.y +
+          (BRIGHTNESS_NODE_BODY_HEIGHT + CAPTION_HEIGHT + CARD_BORDER_HEIGHT) * 0.5 +
+          WORLD_ORIGIN,
       };
     }
 
-    if (nodeId === PREVIEW_GRAPH_NODE_ID && portId === PREVIEW_INPUT_PORT_ID) {
+    if (
+      graphNode.definitionId === PREVIEW_NODE_DEFINITION_ID &&
+      portId === PREVIEW_INPUT_PORT_ID
+    ) {
+      const previewView = previewNodeViews.find(
+        (previewNodeView) => previewNodeView.graphNode.id === nodeId,
+      );
+      if (!previewView) {
+        return null;
+      }
+
       return {
-        x: previewNode.x - 12 + WORLD_ORIGIN,
-        y: previewNode.y + previewHeight * 0.5 + WORLD_ORIGIN,
+        x: graphNode.x - 12 + WORLD_ORIGIN,
+        y:
+          previewView.bounds.top +
+          (previewView.bounds.bottom - previewView.bounds.top) * 0.5 +
+          WORLD_ORIGIN,
       };
     }
 
@@ -732,36 +831,40 @@ function App() {
     point: { x: number; y: number },
     sourceNodeId: string,
   ) => {
-    if (
-      sourceNodeId !== BRIGHTNESS_GRAPH_NODE_ID &&
-      brightnessNodeDefinition?.inputs.some(
-        (port) =>
-          port.id === BRIGHTNESS_INPUT_PORT_ID && port.kind === "texture",
-      ) &&
-      point.x >= brightnessBounds.left &&
-      point.x <= brightnessBounds.right &&
-      point.y >= brightnessBounds.top &&
-      point.y <= brightnessBounds.bottom
-    ) {
-      return {
-        nodeId: BRIGHTNESS_GRAPH_NODE_ID,
-        portId: BRIGHTNESS_INPUT_PORT_ID,
-      };
-    }
+    for (const graphNode of utilityGraphNodes) {
+      if (graphNode.id === sourceNodeId) {
+        continue;
+      }
 
-    if (
-      sourceNodeId !== PREVIEW_GRAPH_NODE_ID &&
-      previewNodeDefinition?.inputs.some(
-        (port) => port.id === PREVIEW_INPUT_PORT_ID && port.kind === "texture",
-      ) &&
-      point.x >= previewBounds.left &&
-      point.x <= previewBounds.right &&
-      point.y >= previewBounds.top &&
-      point.y <= previewBounds.bottom
-    ) {
+      const definition = getNodeDefinition(graphNode.definitionId);
+      const textureInput = definition?.inputs.find(
+        (port) => port.kind === "texture",
+      );
+      if (!textureInput) {
+        continue;
+      }
+
+      const bounds =
+        graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID
+          ? brightnessNodeViews.find((view) => view.graphNode.id === graphNode.id)
+              ?.bounds
+          : graphNode.definitionId === PREVIEW_NODE_DEFINITION_ID
+            ? previewNodeViews.find((view) => view.graphNode.id === graphNode.id)
+                ?.bounds
+            : null;
+      if (
+        !bounds ||
+        point.x < bounds.left ||
+        point.x > bounds.right ||
+        point.y < bounds.top ||
+        point.y > bounds.bottom
+      ) {
+        continue;
+      }
+
       return {
-        nodeId: PREVIEW_GRAPH_NODE_ID,
-        portId: PREVIEW_INPUT_PORT_ID,
+        nodeId: graphNode.id,
+        portId: textureInput.id,
       };
     }
 
@@ -776,13 +879,7 @@ function App() {
             wireDraft.sourceNodeId,
           )
         : null,
-    [
-      brightnessBounds,
-      brightnessNodeDefinition,
-      previewBounds,
-      previewNodeDefinition,
-      wireDraft,
-    ],
+    [brightnessNodeViews, previewNodeViews, utilityGraphNodes, wireDraft],
   );
 
   const wires = useMemo(() => {
@@ -816,33 +913,20 @@ function App() {
 
     if (wireDraft) {
       const start = getGraphNodeOutputAnchor(wireDraft.sourceNodeId);
-      if (!start) {
-        return nextWires;
+      if (start) {
+        nextWires.push({
+          id: `draft-${wireDraft.sourceNodeId}`,
+          startX: start.x,
+          startY: start.y,
+          endX: wireDraft.pointerX + WORLD_ORIGIN,
+          endY: wireDraft.pointerY + WORLD_ORIGIN,
+          draft: true,
+        });
       }
-
-      nextWires.push({
-        id: `draft-${wireDraft.sourceNodeId}`,
-        startX: start.x,
-        startY: start.y,
-        endX: wireDraft.pointerX + WORLD_ORIGIN,
-        endY: wireDraft.pointerY + WORLD_ORIGIN,
-        draft: true,
-      });
     }
 
     return nextWires;
-  }, [
-    brightnessHeight,
-    brightnessNode.width,
-    brightnessNode.x,
-    brightnessNode.y,
-    connections,
-    displayNodeById,
-    previewHeight,
-    previewNode.x,
-    previewNode.y,
-    wireDraft,
-  ]);
+  }, [connections, displayNodeById, previewNodeViews, graphNodeById, wireDraft]);
 
   const ensureNodeOutputCanvas = (
     nodeId: string,
@@ -961,11 +1045,11 @@ function App() {
   };
 
   const renderBrightnessNodeOutputSurface = (
-    graphNodeId: string,
+    graphNode: GraphNodeInstance,
     sourceCanvas: HTMLCanvasElement,
   ) => {
     const canvas = ensureNodeOutputCanvas(
-      graphNodeId,
+      graphNode.id,
       sourceCanvas.width,
       sourceCanvas.height,
     );
@@ -976,7 +1060,7 @@ function App() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
-    ctx.filter = `brightness(${brightnessValue.toFixed(2)})`;
+    ctx.filter = `brightness(${getBrightnessValue(graphNode).toFixed(2)})`;
     ctx.drawImage(sourceCanvas, 0, 0, canvas.width, canvas.height);
     ctx.restore();
 
@@ -1001,10 +1085,14 @@ function App() {
       return mediaNode ? renderMediaNodeOutputSurface(nodeId, mediaNode) : false;
     }
 
-    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
-      const inputConnection = resolveInputConnection(
-        connections,
-        BRIGHTNESS_GRAPH_NODE_ID,
+    const graphNode = graphNodeById.get(nodeId);
+    if (!graphNode) {
+      return false;
+    }
+
+    if (graphNode.definitionId === BRIGHTNESS_NODE_DEFINITION_ID) {
+      const inputConnection = getGraphNodeInputConnection(
+        graphNode.id,
         BRIGHTNESS_INPUT_PORT_ID,
       );
       if (!inputConnection) {
@@ -1015,7 +1103,7 @@ function App() {
       const sourceCanvas =
         nodeOutputCanvasesRef.current[inputConnection.fromNodeId] ?? null;
       return sourceCanvas
-        ? renderBrightnessNodeOutputSurface(nodeId, sourceCanvas)
+        ? renderBrightnessNodeOutputSurface(graphNode, sourceCanvas)
         : false;
     }
 
@@ -1044,9 +1132,16 @@ function App() {
       );
     }
 
-    if (nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
-      return brightnessInputConnection
-        ? graphNodeUsesAnimation(brightnessInputConnection.fromNodeId, visited)
+    const graphNode = graphNodeById.get(nodeId);
+    if (
+      graphNode?.definitionId === BRIGHTNESS_NODE_DEFINITION_ID
+    ) {
+      const inputConnection = getGraphNodeInputConnection(
+        graphNode.id,
+        BRIGHTNESS_INPUT_PORT_ID,
+      );
+      return inputConnection
+        ? graphNodeUsesAnimation(inputConnection.fromNodeId, visited)
         : false;
     }
 
@@ -1113,7 +1208,6 @@ function App() {
     setGifSeekFrames({});
     setBrokenMediaIds({});
     setContextMenu(null);
-    setConnections([]);
     setFloatingNodeDrag(null);
     setWireDraft(null);
   };
@@ -1127,6 +1221,8 @@ function App() {
       ...frame,
       memberIds: [...frame.memberIds],
     })),
+    graphNodes: cloneGraphNodes(document.graphNodes),
+    connections: document.connections.map((connection) => ({ ...connection })),
     mediaTransforms: Object.fromEntries(
       Object.entries(document.mediaTransforms).map(([id, settings]) => [
         Number(id),
@@ -1139,6 +1235,8 @@ function App() {
   const applyDocument = (document: BoardDocument) => {
     setImages(document.images);
     setFrames(document.frames);
+    setGraphNodes(document.graphNodes);
+    setConnections(document.connections);
     setMediaTransforms(document.mediaTransforms);
     boardSettingsStore.setValue(DARK_MODE_SETTING_ID, document.darkMode);
     documentRef.current = cloneDocument(document);
@@ -1157,6 +1255,11 @@ function App() {
     const after = {
       images: snapshotState.loadedImages,
       frames: snapshotState.loadedFrames,
+      graphNodes:
+        snapshotState.loadedGraphNodes.length > 0
+          ? snapshotState.loadedGraphNodes
+          : createDefaultGraphNodes(),
+      connections: snapshotState.loadedConnections,
       mediaTransforms: snapshotState.loadedMediaTransforms,
       darkMode: snapshotState.darkMode,
     };
@@ -1170,6 +1273,12 @@ function App() {
     nextIdRef.current = snapshotState.nextId;
     nextZRef.current = snapshotState.nextZ;
     nextFrameIdRef.current = snapshotState.nextFrameId;
+    nextGraphNodeIdRef.current = Math.max(snapshotState.nextGraphNodeId, 1);
+    nextConnectionIdRef.current =
+      snapshotState.loadedConnections.reduce((max, connection) => {
+        const match = connection.id.match(/^c(\d+)$/);
+        return match ? Math.max(max, Number(match[1]) || 0) : max;
+      }, 0) + 1;
   };
 
   const recordHistoryEntry = (
@@ -1871,12 +1980,19 @@ function App() {
       const restoredDocument = {
         images: snapshotState.loadedImages,
         frames: snapshotState.loadedFrames,
+        graphNodes:
+          snapshotState.loadedGraphNodes.length > 0
+            ? snapshotState.loadedGraphNodes
+            : createDefaultGraphNodes(),
+        connections: snapshotState.loadedConnections,
         mediaTransforms: snapshotState.loadedMediaTransforms,
         darkMode: snapshotState.darkMode,
       };
 
       setImages(restoredDocument.images);
       setFrames(restoredDocument.frames);
+      setGraphNodes(restoredDocument.graphNodes);
+      setConnections(restoredDocument.connections);
       setMediaTransforms(restoredDocument.mediaTransforms);
       boardSettingsStore.setValue(DARK_MODE_SETTING_ID, restoredDocument.darkMode);
       documentRef.current = {
@@ -1887,6 +2003,10 @@ function App() {
         frames: restoredDocument.frames.map((frame) => ({
           ...frame,
           memberIds: [...frame.memberIds],
+        })),
+        graphNodes: cloneGraphNodes(restoredDocument.graphNodes),
+        connections: restoredDocument.connections.map((connection) => ({
+          ...connection,
         })),
         mediaTransforms: Object.fromEntries(
           Object.entries(restoredDocument.mediaTransforms).map(([id, settings]) => [
@@ -1912,10 +2032,18 @@ function App() {
       setGifSeekFrames({});
       setBrokenMediaIds({});
       setContextMenu(null);
+      setFloatingNodeDrag(null);
+      setWireDraft(null);
 
       nextIdRef.current = snapshotState.nextId;
       nextZRef.current = snapshotState.nextZ;
       nextFrameIdRef.current = snapshotState.nextFrameId;
+      nextGraphNodeIdRef.current = Math.max(snapshotState.nextGraphNodeId, 1);
+      nextConnectionIdRef.current =
+        snapshotState.loadedConnections.reduce((max, connection) => {
+          const match = connection.id.match(/^c(\d+)$/);
+          return match ? Math.max(max, Number(match[1]) || 0) : max;
+        }, 0) + 1;
     };
 
     const restorePersistedBoard = async () => {
@@ -1957,6 +2085,8 @@ function App() {
       const snapshot = buildSnapshot(
         images,
         activeFrames,
+        graphNodes,
+        connections,
         activeMediaTransforms,
         darkMode,
       );
@@ -1971,8 +2101,10 @@ function App() {
     };
   }, [
     activeFrames,
+    connections,
     activeMediaTransforms,
     darkMode,
+    graphNodes,
     images,
     persistenceHydrated,
   ]);
@@ -2592,31 +2724,43 @@ function App() {
         .filter((item) => item.mediaKind !== "note")
         .map((item) => getMediaGraphNodeId(item.id)),
     );
+    const validGraphNodeIds = new Set(graphNodes.map((graphNode) => graphNode.id));
     const validOutputNodeIds = new Set<string>([
       ...validMediaNodeIds,
-      BRIGHTNESS_GRAPH_NODE_ID,
+      ...graphNodes
+        .filter(
+          (graphNode) =>
+            (getNodeDefinition(graphNode.definitionId)?.outputs.length ?? 0) > 0,
+        )
+        .map((graphNode) => graphNode.id),
     ]);
-    const validInputNodeIds = new Set<string>([
-      BRIGHTNESS_GRAPH_NODE_ID,
-      PREVIEW_GRAPH_NODE_ID,
-    ]);
+    const validInputNodeIds = new Set<string>(
+      graphNodes
+        .filter(
+          (graphNode) =>
+            (getNodeDefinition(graphNode.definitionId)?.inputs.length ?? 0) > 0,
+        )
+        .map((graphNode) => graphNode.id),
+    );
 
     setConnections((current) =>
       current.filter(
         (connection) =>
           validOutputNodeIds.has(connection.fromNodeId) &&
           validInputNodeIds.has(connection.toNodeId) &&
-          connection.fromNodeId !== connection.toNodeId,
+          connection.fromNodeId !== connection.toNodeId &&
+          (validMediaNodeIds.has(connection.fromNodeId) ||
+            validGraphNodeIds.has(connection.fromNodeId)),
       ),
     );
-  }, [images]);
+  }, [graphNodes, images]);
 
   useEffect(() => {
     const validIds = new Set<string>([
       ...images
         .filter((item) => item.mediaKind !== "note")
         .map((item) => getMediaGraphNodeId(item.id)),
-      BRIGHTNESS_GRAPH_NODE_ID,
+      ...graphNodes.map((graphNode) => graphNode.id),
     ]);
     let didChange = false;
 
@@ -2632,10 +2776,32 @@ function App() {
     if (didChange) {
       setOutputSurfaceVersion((current) => current + 1);
     }
-  }, [images]);
+  }, [graphNodes, images]);
 
   useEffect(() => {
-    if (!previewConnection) {
+    const outputRoots = new Set<string>();
+
+    for (const brightnessNode of brightnessNodes) {
+      const inputConnection = getGraphNodeInputConnection(
+        brightnessNode.id,
+        BRIGHTNESS_INPUT_PORT_ID,
+      );
+      if (inputConnection) {
+        outputRoots.add(brightnessNode.id);
+      }
+    }
+
+    for (const previewNode of previewNodes) {
+      const inputConnection = getGraphNodeInputConnection(
+        previewNode.id,
+        PREVIEW_INPUT_PORT_ID,
+      );
+      if (inputConnection) {
+        outputRoots.add(inputConnection.fromNodeId);
+      }
+    }
+
+    if (outputRoots.size === 0) {
       return;
     }
 
@@ -2643,9 +2809,13 @@ function App() {
     let cancelled = false;
 
     const renderOutputs = () => {
-      const rendered = renderGraphNodeOutputSurface(previewConnection.fromNodeId);
-      const shouldAnimate =
-        rendered && graphNodeUsesAnimation(previewConnection.fromNodeId);
+      let shouldAnimate = false;
+
+      for (const rootNodeId of outputRoots) {
+        const rendered = renderGraphNodeOutputSurface(rootNodeId);
+        shouldAnimate =
+          (rendered && graphNodeUsesAnimation(rootNodeId)) || shouldAnimate;
+      }
 
       if (!cancelled && shouldAnimate) {
         frameId = window.requestAnimationFrame(renderOutputs);
@@ -2660,11 +2830,11 @@ function App() {
     };
   }, [
     activeMediaTransforms,
-    brightnessInputConnection,
-    brightnessValue,
+    brightnessNodes,
     connections,
+    graphNodes,
     images,
-    previewConnection,
+    previewNodes,
   ]);
 
   useEffect(() => {
@@ -3141,6 +3311,32 @@ function App() {
     setSelectedIds([noteId]);
   };
 
+  const addGraphNode = (
+    definitionId: string,
+    anchor = getVisibleBoardCenter(),
+  ) => {
+    const definition = getNodeDefinition(definitionId);
+    if (!definition) {
+      return;
+    }
+
+    const before = cloneDocument(documentRef.current);
+    const nextGraphNode = createGraphNodeInstance(
+      definitionId,
+      nextGraphNodeIdRef.current++,
+      anchor.x,
+      anchor.y,
+      nextZRef.current++,
+    );
+    const after = {
+      ...before,
+      graphNodes: [...before.graphNodes, nextGraphNode],
+    };
+
+    applyDocument(after);
+    recordHistoryEntry(`Add ${definition.label} Node`, before, after);
+  };
+
   const readClipboardMedia = async () => {
     if (
       !("clipboard" in navigator) ||
@@ -3243,6 +3439,8 @@ function App() {
     const snapshot = buildSnapshot(
       images,
       activeFrames,
+      graphNodes,
+      connections,
       activeMediaTransforms,
       darkMode,
     );
@@ -3632,68 +3830,60 @@ function App() {
     startWireDrag(event, getMediaGraphNodeId(id), MEDIA_OUTPUT_PORT_ID);
   };
 
-  const onBrightnessOutputPointerDown = (event: ReactPointerEvent) => {
-    if (
-      !brightnessNodeDefinition?.outputs.some(
-        (port) => port.id === BRIGHTNESS_OUTPUT_PORT_ID,
-      )
-    ) {
+  const onGraphNodeOutputPointerDown = (
+    event: ReactPointerEvent,
+    graphNodeId: string,
+  ) => {
+    const graphNode = graphNodeById.get(graphNodeId);
+    const definition = graphNode
+      ? getNodeDefinition(graphNode.definitionId)
+      : null;
+    const textureOutput = definition?.outputs.find(
+      (port) => port.kind === "texture",
+    );
+    if (!textureOutput) {
       return;
     }
 
     setSelectedFrameId(null);
     setSelectedId(null);
     setSelectedIds([]);
-    startWireDrag(
-      event,
-      BRIGHTNESS_GRAPH_NODE_ID,
-      BRIGHTNESS_OUTPUT_PORT_ID,
+    startWireDrag(event, graphNodeId, textureOutput.id);
+  };
+
+  const onGraphNodePointerDown = (
+    event: ReactPointerEvent,
+    graphNodeId: string,
+  ) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const point = getBoardPointer(event);
+    if (!point) {
+      return;
+    }
+    const graphNode = graphNodeById.get(graphNodeId);
+    if (!graphNode) {
+      return;
+    }
+
+    closeContextMenu();
+    setFloatingNodeDrag({
+      nodeId: graphNodeId,
+      offsetX: point.x - graphNode.x,
+      offsetY: point.y - graphNode.y,
+    });
+    setGraphNodes((current) =>
+      current.map((candidate) =>
+        candidate.id === graphNodeId
+          ? { ...candidate, z: nextZRef.current++ }
+          : candidate,
+      ),
     );
-  };
-
-  const onPreviewNodePointerDown = (event: ReactPointerEvent) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const point = getBoardPointer(event);
-    if (!point) {
-      return;
-    }
-
-    closeContextMenu();
-    setFloatingNodeDrag({
-      nodeId: PREVIEW_GRAPH_NODE_ID,
-      offsetX: point.x - previewNode.x,
-      offsetY: point.y - previewNode.y,
-    });
-    setWireDraft(null);
-
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  };
-
-  const onBrightnessNodePointerDown = (event: ReactPointerEvent) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const point = getBoardPointer(event);
-    if (!point) {
-      return;
-    }
-
-    closeContextMenu();
-    setFloatingNodeDrag({
-      nodeId: BRIGHTNESS_GRAPH_NODE_ID,
-      offsetX: point.x - brightnessNode.x,
-      offsetY: point.y - brightnessNode.y,
-    });
     setWireDraft(null);
 
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
@@ -3940,19 +4130,17 @@ function App() {
     }
 
     if (floatingNodeDrag) {
-      if (floatingNodeDrag.nodeId === PREVIEW_GRAPH_NODE_ID) {
-        setPreviewNode((current) => ({
-          ...current,
-          x: point.x - floatingNodeDrag.offsetX,
-          y: point.y - floatingNodeDrag.offsetY,
-        }));
-      } else if (floatingNodeDrag.nodeId === BRIGHTNESS_GRAPH_NODE_ID) {
-        setBrightnessNode((current) => ({
-          ...current,
-          x: point.x - floatingNodeDrag.offsetX,
-          y: point.y - floatingNodeDrag.offsetY,
-        }));
-      }
+      setGraphNodes((current) =>
+        current.map((graphNode) =>
+          graphNode.id === floatingNodeDrag.nodeId
+            ? {
+                ...graphNode,
+                x: point.x - floatingNodeDrag.offsetX,
+                y: point.y - floatingNodeDrag.offsetY,
+              }
+            : graphNode,
+        ),
+      );
       return;
     }
 
@@ -4484,9 +4672,19 @@ function App() {
   };
 
   const clearBoard = () => {
-    setImages([]);
-    setFrames([]);
-    setMediaTransforms({});
+    applyDocument({
+      images: [],
+      frames: [],
+      graphNodes: createDefaultGraphNodes(),
+      connections: [],
+      mediaTransforms: {},
+      darkMode,
+    });
+    nextIdRef.current = 1;
+    nextFrameIdRef.current = 1;
+    nextZRef.current = 3;
+    nextGraphNodeIdRef.current = 3;
+    nextConnectionIdRef.current = 1;
     resetTransientUiState();
   };
 
@@ -4520,6 +4718,12 @@ function App() {
         }}
         onSaveVersion={saveVersion}
         onAddNote={addNote}
+        onAddBrightnessNode={() => {
+          addGraphNode(BRIGHTNESS_NODE_DEFINITION_ID);
+        }}
+        onAddPreviewNode={() => {
+          addGraphNode(PREVIEW_NODE_DEFINITION_ID);
+        }}
         onLoadVersion={(files) => {
           void loadVersion(files);
         }}
@@ -4731,40 +4935,70 @@ function App() {
             })()
           ))}
 
-          <BrightnessNode
-            x={brightnessNode.x}
-            y={brightnessNode.y}
-            width={brightnessNode.width}
-            bodyHeight={BRIGHTNESS_NODE_BODY_HEIGHT}
-            zIndex={previewNodeZIndex}
-            brightness={brightnessValue}
-            sourceLabel={brightnessSourceLabel}
-            sourceCanvas={brightnessSourceCanvas}
-            outputCanvas={brightnessOutputCanvas}
-            inputConnected={Boolean(brightnessInputConnection)}
-            outputConnected={connections.some(
-              (connection) =>
-                connection.fromNodeId === BRIGHTNESS_GRAPH_NODE_ID &&
-                connection.fromPortId === BRIGHTNESS_OUTPUT_PORT_ID,
-            )}
-            isDropTarget={activeWireDropTarget?.nodeId === BRIGHTNESS_GRAPH_NODE_ID}
-            onPointerDown={onBrightnessNodePointerDown}
-            onOutputPointerDown={onBrightnessOutputPointerDown}
-            onBrightnessChange={setBrightnessValue}
-          />
+          {brightnessNodeViews.map((brightnessNodeView) => (
+            <BrightnessNode
+              key={brightnessNodeView.graphNode.id}
+              x={brightnessNodeView.graphNode.x}
+              y={brightnessNodeView.graphNode.y}
+              width={brightnessNodeView.graphNode.width}
+              bodyHeight={BRIGHTNESS_NODE_BODY_HEIGHT}
+              zIndex={brightnessNodeView.graphNode.z}
+              brightness={brightnessNodeView.brightness}
+              sourceLabel={brightnessNodeView.sourceLabel}
+              sourceCanvas={brightnessNodeView.sourceCanvas}
+              outputCanvas={brightnessNodeView.outputCanvas}
+              inputConnected={Boolean(brightnessNodeView.inputConnection)}
+              outputConnected={connections.some(
+                (connection) =>
+                  connection.fromNodeId === brightnessNodeView.graphNode.id &&
+                  connection.fromPortId === BRIGHTNESS_OUTPUT_PORT_ID,
+              )}
+              isDropTarget={
+                activeWireDropTarget?.nodeId === brightnessNodeView.graphNode.id
+              }
+              onPointerDown={(event) => {
+                onGraphNodePointerDown(event, brightnessNodeView.graphNode.id);
+              }}
+              onOutputPointerDown={(event) => {
+                onGraphNodeOutputPointerDown(event, brightnessNodeView.graphNode.id);
+              }}
+              onBrightnessChange={(value) => {
+                setGraphNodes((current) =>
+                  current.map((graphNode) =>
+                    graphNode.id === brightnessNodeView.graphNode.id
+                      ? {
+                          ...graphNode,
+                          params: {
+                            ...graphNode.params,
+                            brightness: value,
+                          },
+                        }
+                      : graphNode,
+                  ),
+                );
+              }}
+            />
+          ))}
 
-          <PreviewNode
-            x={previewNode.x}
-            y={previewNode.y}
-            width={previewNode.width}
-            aspect={previewAspect}
-            zIndex={previewNodeZIndex}
-            hasInput={Boolean(previewConnection)}
-            sourceLabel={previewSourceLabel}
-            sourceCanvas={previewSourceCanvas}
-            isDropTarget={activeWireDropTarget?.nodeId === PREVIEW_GRAPH_NODE_ID}
-            onPointerDown={onPreviewNodePointerDown}
-          />
+          {previewNodeViews.map((previewNodeView) => (
+            <PreviewNode
+              key={previewNodeView.graphNode.id}
+              x={previewNodeView.graphNode.x}
+              y={previewNodeView.graphNode.y}
+              width={previewNodeView.graphNode.width}
+              aspect={previewNodeView.aspect}
+              zIndex={previewNodeView.graphNode.z}
+              hasInput={Boolean(previewNodeView.inputConnection)}
+              sourceLabel={previewNodeView.sourceLabel}
+              sourceCanvas={previewNodeView.sourceCanvas}
+              isDropTarget={
+                activeWireDropTarget?.nodeId === previewNodeView.graphNode.id
+              }
+              onPointerDown={(event) => {
+                onGraphNodePointerDown(event, previewNodeView.graphNode.id);
+              }}
+            />
+          ))}
 
           {displayNodes.map(({ image, displayX, displayY, displayWidth }) => {
             return (

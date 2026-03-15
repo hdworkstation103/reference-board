@@ -1,3 +1,5 @@
+import type { GraphConnection } from "../graph";
+
 export type NodeMediaItem = {
   src: string;
   sourceDataUrl?: string;
@@ -67,9 +69,23 @@ export type MediaTimeline = {
   duration: number;
 };
 
+export type GraphNodeParamValue = string | number | boolean;
+
+export type GraphNodeInstance = {
+  id: string;
+  definitionId: string;
+  x: number;
+  y: number;
+  width: number;
+  z: number;
+  params?: Record<string, GraphNodeParamValue>;
+};
+
 export type BoardDocument = {
   images: BoardImage[];
   frames: BoardFrame[];
+  graphNodes: GraphNodeInstance[];
+  connections: GraphConnection[];
   mediaTransforms: Record<number, MediaTransformSettings>;
   darkMode: boolean;
 };

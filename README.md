@@ -50,6 +50,8 @@ Canvas state can be exported to JSON and loaded back into the app. Current snaps
 - media records
 - note nodes
 - frame definitions
+- graph node instances
+- graph connections
 - media transform settings
 - dark mode state
 

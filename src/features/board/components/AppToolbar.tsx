@@ -10,6 +10,8 @@ type AppToolbarProps = {
   onAddFiles: (files: FileList | null) => void;
   onSaveVersion: () => void;
   onAddNote: () => void;
+  onAddBrightnessNode: () => void;
+  onAddPreviewNode: () => void;
   onLoadVersion: (files: FileList | null) => void;
   onCenterView: () => void;
   onClearBoard: () => void;
@@ -29,6 +31,8 @@ function AppToolbar({
   onAddFiles,
   onSaveVersion,
   onAddNote,
+  onAddBrightnessNode,
+  onAddPreviewNode,
   onLoadVersion,
   onCenterView,
   onClearBoard,
@@ -135,6 +139,26 @@ function AppToolbar({
                 }}
               >
                 Add Note
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setOpenMenu(null);
+                  onAddBrightnessNode();
+                }}
+              >
+                Add Brightness Node
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  setOpenMenu(null);
+                  onAddPreviewNode();
+                }}
+              >
+                Add Preview Node
               </button>
               <label
                 className="menu-item"

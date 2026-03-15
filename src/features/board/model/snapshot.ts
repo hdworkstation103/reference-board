@@ -1,5 +1,7 @@
 import { MIN_IMAGE_WIDTH, NOTE_DEFAULT_ASPECT } from "../constants";
+import type { GraphConnection } from "../graph";
 import type { BoardFrame, BoardImage, MediaTransformSettings, NodeMediaItem } from "./board";
+import type { GraphNodeInstance, GraphNodeParamValue } from "./board";
 
 type SnapshotMedia = {
   id: string;
@@ -76,12 +78,39 @@ type BoardSnapshotV6 = {
   darkMode: boolean;
 };
 
+type SnapshotGraphNode = {
+  id: string;
+  definitionId: string;
+  x: number;
+  y: number;
+  width: number;
+  z: number;
+  params?: Record<string, GraphNodeParamValue>;
+};
+
+type SnapshotConnection = GraphConnection;
+
+type BoardSnapshotV7 = {
+  version: 7;
+  createdAt: string;
+  media: Record<string, SnapshotMedia>;
+  nodes: SnapshotNode[];
+  frames: SnapshotFrameNode[];
+  graphNodes: SnapshotGraphNode[];
+  connections: SnapshotConnection[];
+  mediaTransforms: Record<number, MediaTransformSettings>;
+  darkMode: boolean;
+};
+
 export type ParsedSnapshot = {
   darkMode: boolean;
   loadedFrames: BoardFrame[];
+  loadedGraphNodes: GraphNodeInstance[];
   loadedImages: BoardImage[];
+  loadedConnections: GraphConnection[];
   loadedMediaTransforms: Record<number, MediaTransformSettings>;
   nextFrameId: number;
+  nextGraphNodeId: number;
   nextId: number;
   nextZ: number;
 };
@@ -179,6 +208,18 @@ const buildSnapshotFrame = (frame: BoardFrame): SnapshotFrameNode => ({
   activeMemberIndex: frame.activeMemberIndex,
   slideshowPlaying: frame.slideshowPlaying,
   z: frame.z,
+});
+
+const buildSnapshotGraphNode = (
+  graphNode: GraphNodeInstance,
+): SnapshotGraphNode => ({
+  id: graphNode.id,
+  definitionId: graphNode.definitionId,
+  x: graphNode.x,
+  y: graphNode.y,
+  width: graphNode.width,
+  z: graphNode.z,
+  params: graphNode.params ? { ...graphNode.params } : undefined,
 });
 
 const parseMediaEntry = (
@@ -397,21 +438,105 @@ const parseMediaTransforms = (
   return next;
 };
 
+const parseGraphNodeParams = (
+  value: unknown,
+): Record<string, GraphNodeParamValue> | undefined => {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const next: Record<string, GraphNodeParamValue> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      typeof entry === "string" ||
+      typeof entry === "number" ||
+      typeof entry === "boolean"
+    ) {
+      next[key] = entry;
+    }
+  }
+
+  return Object.keys(next).length > 0 ? next : undefined;
+};
+
+const parseSnapshotGraphNode = (
+  node: Partial<SnapshotGraphNode>,
+): GraphNodeInstance | null => {
+  if (
+    typeof node?.id !== "string" ||
+    typeof node.definitionId !== "string" ||
+    typeof node.x !== "number" ||
+    typeof node.y !== "number" ||
+    typeof node.width !== "number" ||
+    typeof node.z !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    id: node.id,
+    definitionId: node.definitionId,
+    x: node.x,
+    y: node.y,
+    width: Math.max(MIN_IMAGE_WIDTH, node.width),
+    z: node.z,
+    params: parseGraphNodeParams(node.params),
+  };
+};
+
+const parseSnapshotConnection = (
+  connection: Partial<SnapshotConnection>,
+  validOutputNodeIds: Set<string>,
+  validInputNodeIds: Set<string>,
+): GraphConnection | null => {
+  if (
+    typeof connection?.id !== "string" ||
+    typeof connection.fromNodeId !== "string" ||
+    typeof connection.fromPortId !== "string" ||
+    typeof connection.toNodeId !== "string" ||
+    typeof connection.toPortId !== "string" ||
+    connection.kind !== "texture"
+  ) {
+    return null;
+  }
+
+  if (
+    !validOutputNodeIds.has(connection.fromNodeId) ||
+    !validInputNodeIds.has(connection.toNodeId) ||
+    connection.fromNodeId === connection.toNodeId
+  ) {
+    return null;
+  }
+
+  return {
+    id: connection.id,
+    fromNodeId: connection.fromNodeId,
+    fromPortId: connection.fromPortId,
+    toNodeId: connection.toNodeId,
+    toPortId: connection.toPortId,
+    kind: "texture",
+  };
+};
+
 export const buildSnapshot = (
   images: BoardImage[],
   frames: BoardFrame[],
+  graphNodes: GraphNodeInstance[],
+  connections: GraphConnection[],
   mediaTransforms: Record<number, MediaTransformSettings>,
   darkMode: boolean,
-): BoardSnapshotV6 => {
+): BoardSnapshotV7 => {
   const media: Record<string, SnapshotMedia> = {};
   const mediaIdBySignature = new Map<string, string>();
 
   return {
-    version: 6,
+    version: 7,
     createdAt: new Date().toISOString(),
     media,
     nodes: images.map((image) => buildSnapshotNode(image, media, mediaIdBySignature)),
     frames: frames.map(buildSnapshotFrame),
+    graphNodes: graphNodes.map(buildSnapshotGraphNode),
+    connections: connections.map((connection) => ({ ...connection })),
     mediaTransforms,
     darkMode,
   };
@@ -421,13 +546,17 @@ export const parseSnapshot = (text: string): ParsedSnapshot => {
   const parsed = JSON.parse(text) as
     | Partial<BoardSnapshotV4>
     | Partial<BoardSnapshotV5>
-    | Partial<BoardSnapshotV6>;
+    | Partial<BoardSnapshotV6>
+    | Partial<BoardSnapshotV7>;
 
   if (
     !parsed ||
     !parsed.media ||
     !Array.isArray(parsed.nodes) ||
-    (parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6)
+    (parsed.version !== 4 &&
+      parsed.version !== 5 &&
+      parsed.version !== 6 &&
+      parsed.version !== 7)
   ) {
     throw new Error("Unsupported snapshot format");
   }
@@ -441,6 +570,9 @@ export const parseSnapshot = (text: string): ParsedSnapshot => {
   const maxImageZ = loadedImages.reduce((max, item) => Math.max(max, item.z), 0);
   const parsedFrames = "frames" in parsed ? parsed.frames : undefined;
   const parsedGroups = "groups" in parsed ? parsed.groups : undefined;
+  const parsedGraphNodes = "graphNodes" in parsed ? parsed.graphNodes : undefined;
+  const parsedConnections =
+    "connections" in parsed ? parsed.connections : undefined;
   const parsedMediaTransforms =
     "mediaTransforms" in parsed ? parsed.mediaTransforms : undefined;
 
@@ -457,14 +589,49 @@ export const parseSnapshot = (text: string): ParsedSnapshot => {
       : [];
 
   const loadedMediaTransforms = parseMediaTransforms(parsedMediaTransforms, validIds);
+  const loadedGraphNodes = Array.isArray(parsedGraphNodes)
+    ? parsedGraphNodes
+        .map((graphNode: Partial<SnapshotGraphNode>) =>
+          parseSnapshotGraphNode(graphNode),
+        )
+        .filter((graphNode): graphNode is GraphNodeInstance => graphNode !== null)
+    : [];
+  const validGraphNodeIds = new Set(loadedGraphNodes.map((graphNode) => graphNode.id));
+  const validOutputNodeIds = new Set<string>([
+    ...loadedImages.map((item) => `media:${item.id}`),
+    ...validGraphNodeIds,
+  ]);
+  const loadedConnections = Array.isArray(parsedConnections)
+    ? parsedConnections
+        .map((connection: Partial<SnapshotConnection>) =>
+          parseSnapshotConnection(
+            connection,
+            validOutputNodeIds,
+            validGraphNodeIds,
+          ),
+        )
+        .filter((connection): connection is GraphConnection => connection !== null)
+    : [];
+  const nextGraphNodeId =
+    loadedGraphNodes.reduce((max, graphNode) => {
+      const match = graphNode.id.match(/:(\d+)$/);
+      if (!match) {
+        return max;
+      }
+
+      return Math.max(max, Number(match[1]) || 0);
+    }, 0) + 1;
 
   return {
     darkMode: Boolean(parsed.darkMode),
     loadedFrames,
+    loadedGraphNodes,
     loadedImages,
+    loadedConnections,
     loadedMediaTransforms,
     nextFrameId:
       loadedFrames.reduce((max, frame) => Math.max(max, frame.id), 0) + 1,
+    nextGraphNodeId,
     nextId: loadedImages.reduce((max, item) => Math.max(max, item.id), 0) + 1,
     nextZ:
       Math.max(
