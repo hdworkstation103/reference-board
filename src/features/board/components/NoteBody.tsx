@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react'
 import { renderMarkdownToHtml } from '../utils'
 
 type NoteBodyProps = {
@@ -9,6 +10,11 @@ type NoteBodyProps = {
 }
 
 function NoteBody({ noteMarkdown, noteMode, onPointerDown, onFocusChange, onChange }: NoteBodyProps) {
+  const renderedMarkdown = useMemo(
+    () => renderMarkdownToHtml(noteMarkdown),
+    [noteMarkdown],
+  )
+
   return (
     <div className="note-body node-body">
       {noteMode === 'editing' ? (
@@ -27,10 +33,10 @@ function NoteBody({ noteMarkdown, noteMode, onPointerDown, onFocusChange, onChan
           }}
         />
       ) : (
-        <div className="note-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(noteMarkdown) }} />
+        <div className="note-markdown" dangerouslySetInnerHTML={{ __html: renderedMarkdown }} />
       )}
     </div>
   )
 }
 
-export default NoteBody
+export default memo(NoteBody)

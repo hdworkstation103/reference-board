@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { CARD_BORDER_HEIGHT, CAPTION_HEIGHT, WORLD_ORIGIN } from '../constants'
 import type { BoardImage, MediaTimeline } from '../model'
@@ -168,4 +169,19 @@ function BoardNode({
   )
 }
 
-export default BoardNode
+export default memo(BoardNode, (prevProps, nextProps) =>
+  prevProps.image === nextProps.image &&
+  prevProps.selected === nextProps.selected &&
+  prevProps.displayX === nextProps.displayX &&
+  prevProps.displayY === nextProps.displayY &&
+  prevProps.displayWidth === nextProps.displayWidth &&
+  prevProps.broken === nextProps.broken &&
+  prevProps.mediaTransformCss === nextProps.mediaTransformCss &&
+  prevProps.mediaTransformOrigin === nextProps.mediaTransformOrigin &&
+  prevProps.enableSelectionShader === nextProps.enableSelectionShader &&
+  prevProps.seekPanelOpen === nextProps.seekPanelOpen &&
+  prevProps.videoTimeline?.current === nextProps.videoTimeline?.current &&
+  prevProps.videoTimeline?.duration === nextProps.videoTimeline?.duration &&
+  prevProps.gifFrameCount === nextProps.gifFrameCount &&
+  prevProps.gifSeekFrame === nextProps.gifSeekFrame,
+)

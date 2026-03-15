@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { WORLD_ORIGIN } from "../constants";
 import type { BoardFrame, BoardImage, GroupBounds } from "../model";
 
@@ -54,8 +54,6 @@ function FramePreview({ item }: { item: BoardImage | null }) {
         className="frame-node-preview-media"
         src={item.src}
         muted
-        loop
-        autoPlay
         playsInline
         preload="metadata"
       />
@@ -96,8 +94,6 @@ function TuckedPreviewRow({ item }: { item: BoardImage }) {
       className="frame-node-list-thumb"
       src={item.src}
       muted
-      loop
-      autoPlay
       playsInline
       preload="metadata"
     />
@@ -367,4 +363,16 @@ function FrameNode({
   );
 }
 
-export default FrameNode;
+export default memo(FrameNode, (prevProps, nextProps) =>
+  prevProps.frame === nextProps.frame &&
+  prevProps.bounds.left === nextProps.bounds.left &&
+  prevProps.bounds.top === nextProps.bounds.top &&
+  prevProps.bounds.width === nextProps.bounds.width &&
+  prevProps.bounds.height === nextProps.bounds.height &&
+  prevProps.selected === nextProps.selected &&
+  prevProps.renameRequested === nextProps.renameRequested &&
+  prevProps.displayZIndex === nextProps.displayZIndex &&
+  prevProps.activeItem === nextProps.activeItem &&
+  prevProps.previewItems === nextProps.previewItems &&
+  prevProps.hiddenCount === nextProps.hiddenCount,
+);

@@ -23,7 +23,6 @@ import {
   fileToDataUrl,
   FrameNode,
   getBackgroundShaderOption,
-  getFrameBounds,
   getGroupBounds,
   getItemHeight,
   getItemRect,
@@ -96,6 +95,21 @@ type GifDecoderCtor = new (options: {
   type: string;
 }) => GifDecoderLike;
 
+type InteractionPreview = Record<
+  number,
+  {
+    x: number;
+    y: number;
+    width: number;
+  }
+>;
+
+type IdleCallbackHandle = number;
+type IdleDeadlineLike = {
+  didTimeout: boolean;
+  timeRemaining: () => number;
+};
+
 const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
   flipHorizontal: false,
   translateX: 0,
@@ -107,13 +121,118 @@ const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
   pivotY: 50,
 };
 
-const BOARD_PERSISTENCE_DEBOUNCE_MS = 150;
+const BOARD_PERSISTENCE_DEBOUNCE_MS = 500;
+const MAX_HISTORY_ENTRIES = 50;
 const DARK_MODE_SETTING_ID = "appearance.darkMode";
 const SELECTION_SHADER_SETTING_ID = "rendering.selectionShader";
-  const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
+const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
 const BACKGROUND_SHADER_SETTING_ID = "rendering.backgroundShader";
 const INSPECTOR_WIDTH_SETTING_ID = "workspace.inspectorWidth";
 const SHADER_SANDBOX_SETTING_ID = "workspace.shaderSandbox";
+
+const applyInteractionPreviewToImages = (
+  sourceImages: BoardImage[],
+  preview: InteractionPreview | null,
+) => {
+  if (!preview) {
+    return sourceImages;
+  }
+
+  return sourceImages.map((item) => {
+    const nextPreview = preview[item.id];
+    if (!nextPreview) {
+      return item;
+    }
+
+    return {
+      ...item,
+      x: nextPreview.x,
+      y: nextPreview.y,
+      width: nextPreview.width,
+    };
+  });
+};
+
+const getGroupBoundsFromMap = (
+  ids: number[],
+  imageById: ReadonlyMap<number, BoardImage>,
+) => {
+  let left = Number.POSITIVE_INFINITY;
+  let top = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  let hasItems = false;
+
+  for (const id of ids) {
+    const item = imageById.get(id);
+    if (!item) {
+      continue;
+    }
+
+    hasItems = true;
+    const rect = getItemRect(item);
+    left = Math.min(left, rect.left);
+    top = Math.min(top, rect.top);
+    right = Math.max(right, rect.right);
+    bottom = Math.max(bottom, rect.bottom);
+  }
+
+  if (!hasItems) {
+    return null;
+  }
+
+  return {
+    left,
+    top,
+    width: right - left,
+    height: bottom - top,
+  };
+};
+
+const getFrameBoundsFromMap = (
+  ids: number[],
+  imageById: ReadonlyMap<number, BoardImage>,
+) => {
+  const bounds = getGroupBoundsFromMap(ids, imageById);
+  if (!bounds) {
+    return null;
+  }
+
+  return {
+    left: bounds.left - 28,
+    top: bounds.top - 40,
+    width: bounds.width + 56,
+    height: bounds.height + 58,
+  };
+};
+
+const scheduleIdleTask = (callback: () => void) => {
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (
+      cb: (deadline: IdleDeadlineLike) => void,
+      options?: { timeout: number },
+    ) => IdleCallbackHandle;
+    cancelIdleCallback?: (handle: IdleCallbackHandle) => void;
+  };
+
+  if (typeof idleWindow.requestIdleCallback === "function") {
+    const handle = idleWindow.requestIdleCallback(
+      () => {
+        callback();
+      },
+      { timeout: 1000 },
+    );
+
+    return () => {
+      idleWindow.cancelIdleCallback?.(handle);
+    };
+  }
+
+  const handle = window.setTimeout(callback, 0);
+  return () => {
+    window.clearTimeout(handle);
+  };
+};
 
 function App() {
   const boardSettings = useBoardSettings();
@@ -144,9 +263,9 @@ function App() {
   const [selectedFrameId, setSelectedFrameId] = useState<number | null>(null);
   const [renamingFrameId, setRenamingFrameId] = useState<number | null>(null);
   const [seekPanelId, setSeekPanelId] = useState<number | null>(null);
-  const [videoTimelines, setVideoTimelines] = useState<
-    Record<number, MediaTimeline>
-  >({});
+  const [activeVideoTimeline, setActiveVideoTimeline] = useState<
+    MediaTimeline | undefined
+  >(undefined);
   const [gifFrameCounts, setGifFrameCounts] = useState<Record<number, number>>(
     {},
   );
@@ -168,6 +287,11 @@ function App() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [settingsPopoverOpen, setSettingsPopoverOpen] = useState(false);
+  const [interactionPreview, setInteractionPreview] =
+    useState<InteractionPreview | null>(null);
+  const [liveInspectorWidth, setLiveInspectorWidth] = useState<number | null>(
+    null,
+  );
   const [inspectorResize, setInspectorResize] = useState<{
     startX: number;
     startWidth: number;
@@ -183,6 +307,7 @@ function App() {
   >({});
   const groupFadeTimeoutRef = useRef<number | null>(null);
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
+  const videoTimelinesRef = useRef<Record<number, MediaTimeline>>({});
   const pendingVideoSeekRef = useRef<Record<number, number>>({});
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const keyStateRef = useRef({ shift: false });
@@ -195,57 +320,72 @@ function App() {
   });
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const imageIdSet = useMemo(() => new Set(images.map((item) => item.id)), [images]);
+  const imageById = useMemo(
+    () => new Map(images.map((item) => [item.id, item])),
+    [images],
+  );
+  const displayImages = useMemo(
+    () => applyInteractionPreviewToImages(images, interactionPreview),
+    [images, interactionPreview],
+  );
+  const displayImageById = useMemo(
+    () => new Map(displayImages.map((item) => [item.id, item])),
+    [displayImages],
+  );
   const effectiveSeekPanelId = useMemo(
-    () =>
-      seekPanelId !== null && images.some((item) => item.id === seekPanelId)
-        ? seekPanelId
-        : null,
-    [images, seekPanelId],
+    () => (seekPanelId !== null && imageIdSet.has(seekPanelId) ? seekPanelId : null),
+    [imageIdSet, seekPanelId],
   );
   const activeBrokenMediaIds = useMemo(() => {
-    const validIds = new Set(images.map((item) => item.id));
     const next: Record<number, true> = {};
     for (const key of Object.keys(brokenMediaIds)) {
       const id = Number(key);
-      if (validIds.has(id)) {
+      if (imageIdSet.has(id)) {
         next[id] = true;
       }
     }
     return next;
-  }, [brokenMediaIds, images]);
+  }, [brokenMediaIds, imageIdSet]);
   const activeMediaTransforms = useMemo(() => {
-    const validIds = new Set(images.map((item) => item.id));
     const next: Record<number, MediaTransformSettings> = {};
     for (const key of Object.keys(mediaTransforms)) {
       const id = Number(key);
-      if (validIds.has(id)) {
+      if (imageIdSet.has(id)) {
         next[id] = mediaTransforms[id];
       }
     }
     return next;
-  }, [mediaTransforms, images]);
+  }, [imageIdSet, mediaTransforms]);
   const activeFrames = useMemo(
     () =>
       frames
         .map((frame) => ({
           ...frame,
-          memberIds: frame.memberIds.filter((id) =>
-            images.some((item) => item.id === id),
-          ),
+          memberIds: frame.memberIds.filter((id) => imageIdSet.has(id)),
         }))
         .filter((frame) => frame.memberIds.length > 0),
-    [frames, images],
+    [frames, imageIdSet],
   );
+  const activeFrameByMemberId = useMemo(() => {
+    const next = new Map<number, BoardFrame>();
+    for (const frame of activeFrames) {
+      for (const memberId of frame.memberIds) {
+        next.set(memberId, frame);
+      }
+    }
+    return next;
+  }, [activeFrames]);
   const frameViews = useMemo(
     () =>
       activeFrames
         .map((frame) => {
-          const bounds = getFrameBounds(frame.memberIds, images);
+          const bounds = getFrameBoundsFromMap(frame.memberIds, displayImageById);
           return bounds ? { id: frame.id, frame, bounds } : null;
         })
         .filter((value): value is FrameView => value !== null)
         .sort((a, b) => a.frame.z - b.frame.z),
-    [activeFrames, images],
+    [activeFrames, displayImageById],
   );
   const collapsedFrameMemberIds = useMemo(() => {
     const hidden = new Set<number>();
@@ -260,8 +400,8 @@ function App() {
     return hidden;
   }, [activeFrames]);
   const visibleImages = useMemo(
-    () => images.filter((item) => !collapsedFrameMemberIds.has(item.id)),
-    [collapsedFrameMemberIds, images],
+    () => displayImages.filter((item) => !collapsedFrameMemberIds.has(item.id)),
+    [collapsedFrameMemberIds, displayImages],
   );
   const boardDocument = useMemo<BoardDocument>(
     () => ({
@@ -282,14 +422,14 @@ function App() {
     [activeFrames, selectedFrameId],
   );
   const getFrameForNode = (nodeId: number) =>
-    activeFrames.find((frame) => frame.memberIds.includes(nodeId)) ?? null;
+    activeFrameByMemberId.get(nodeId) ?? null;
   const inspectorNode = useMemo(() => {
     if (selectedId === null) {
       return null;
     }
 
-    return images.find((item) => item.id === selectedId) ?? null;
-  }, [images, selectedId]);
+    return imageById.get(selectedId) ?? null;
+  }, [imageById, selectedId]);
   const selectedNodeTransform = useMemo(() => {
     if (!inspectorNode) {
       return DEFAULT_MEDIA_TRANSFORM;
@@ -412,9 +552,9 @@ function App() {
   const appContentStyle = useMemo(
     () =>
       ({
-        "--inspector-width": `${inspectorWidth}px`,
+        "--inspector-width": `${liveInspectorWidth ?? inspectorWidth}px`,
       }) as CSSProperties,
-    [inspectorWidth],
+    [inspectorWidth, liveInspectorWidth],
   );
   const appShellStyle = useMemo(
     () =>
@@ -427,6 +567,26 @@ function App() {
     () => getBackgroundShaderOption(backgroundShaderId),
     [backgroundShaderId],
   );
+  const currentSeekVideoTimeline =
+    effectiveSeekPanelId !== null
+      ? activeVideoTimeline ?? videoTimelinesRef.current[effectiveSeekPanelId]
+      : undefined;
+
+  const writeVideoTimeline = (
+    id: number,
+    nextValue: MediaTimeline | null,
+  ) => {
+    const nextTimelines = { ...videoTimelinesRef.current };
+    if (nextValue) {
+      nextTimelines[id] = nextValue;
+    } else {
+      delete nextTimelines[id];
+    }
+    videoTimelinesRef.current = nextTimelines;
+    if (effectiveSeekPanelId === id) {
+      setActiveVideoTimeline(nextValue ?? undefined);
+    }
+  };
 
   const getMediaTransformForNode = (id: number) =>
     activeMediaTransforms[id] ?? DEFAULT_MEDIA_TRANSFORM;
@@ -492,7 +652,9 @@ function App() {
     setGroupOverlay(null);
     setPan(null);
     setMarquee(null);
-    setVideoTimelines({});
+    videoTimelinesRef.current = {};
+    setActiveVideoTimeline(undefined);
+    setInteractionPreview(null);
     setGifFrameCounts({});
     setGifSeekFrames({});
     setBrokenMediaIds({});
@@ -522,7 +684,7 @@ function App() {
     setFrames(document.frames);
     setMediaTransforms(document.mediaTransforms);
     boardSettingsStore.setValue(DARK_MODE_SETTING_ID, document.darkMode);
-    documentRef.current = cloneDocument(document);
+    documentRef.current = document;
   };
 
   const restoreSnapshotState = (
@@ -559,14 +721,8 @@ function App() {
     after: BoardDocument,
     visibilityPriority: HistoryVisibilityPriority = 0,
   ) => {
-    const beforeJson = JSON.stringify(before);
-    const afterJson = JSON.stringify(after);
-    if (beforeJson === afterJson) {
-      return;
-    }
-
     setHistoryEntries((current) => [
-      ...current,
+      ...current.slice(-(MAX_HISTORY_ENTRIES - 1)),
       {
         id: `h${nextHistoryIdRef.current++}`,
         label,
@@ -609,7 +765,7 @@ function App() {
 
   const getFrameItems = (frame: BoardFrame) => {
     const members = frame.memberIds
-      .map((memberId) => images.find((item) => item.id === memberId) ?? null)
+      .map((memberId) => imageById.get(memberId) ?? null)
       .filter((item): item is BoardImage => item !== null);
     return members;
   };
@@ -743,7 +899,7 @@ function App() {
     const uniqueMemberIds = memberIds.filter(
       (id, index) =>
         memberIds.indexOf(id) === index &&
-        images.some((item) => item.id === id),
+        imageIdSet.has(id),
     );
     if (uniqueMemberIds.length === 0) {
       return;
@@ -794,7 +950,7 @@ function App() {
     if (event.altKey) {
       const idMap = new Map<number, number>();
       const duplicatedItems = frame.memberIds
-        .map((memberId) => images.find((item) => item.id === memberId))
+        .map((memberId) => imageById.get(memberId))
         .filter((item): item is BoardImage => item !== undefined)
         .map((source) => {
           const duplicateId = nextIdRef.current++;
@@ -839,38 +995,36 @@ function App() {
         },
       ]);
 
-      setVideoTimelines((current) => {
-        const next = { ...current };
-        for (const memberId of frame.memberIds) {
-          const duplicateId = idMap.get(memberId);
-          if (!duplicateId) {
-            continue;
-          }
-
-          const source = images.find((item) => item.id === memberId);
-          const sourceVideo =
-            source?.mediaKind === "video" ? videoRefs.current[memberId] : null;
-          const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null;
-          const sourceVideoDuration =
-            sourceVideo && Number.isFinite(sourceVideo.duration)
-              ? sourceVideo.duration
-              : (videoTimelines[memberId]?.duration ?? 0);
-
-          if (sourceVideoTime !== null) {
-            pendingVideoSeekRef.current[duplicateId] = sourceVideoTime;
-            next[duplicateId] = {
-              current: sourceVideoTime,
-              duration: sourceVideoDuration,
-            };
-          }
+      const nextVideoTimelines = { ...videoTimelinesRef.current };
+      for (const memberId of frame.memberIds) {
+        const duplicateId = idMap.get(memberId);
+        if (!duplicateId) {
+          continue;
         }
-        return next;
-      });
+
+        const source = imageById.get(memberId);
+        const sourceVideo =
+          source?.mediaKind === "video" ? videoRefs.current[memberId] : null;
+        const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null;
+        const sourceVideoDuration =
+          sourceVideo && Number.isFinite(sourceVideo.duration)
+            ? sourceVideo.duration
+            : (videoTimelinesRef.current[memberId]?.duration ?? 0);
+
+        if (sourceVideoTime !== null) {
+          pendingVideoSeekRef.current[duplicateId] = sourceVideoTime;
+          nextVideoTimelines[duplicateId] = {
+            current: sourceVideoTime,
+            duration: sourceVideoDuration,
+          };
+        }
+      }
+      videoTimelinesRef.current = nextVideoTimelines;
 
       setGifSeekFrames((current) => {
         const next = { ...current };
         for (const memberId of frame.memberIds) {
-          const source = images.find((item) => item.id === memberId);
+          const source = imageById.get(memberId);
           const duplicateId = idMap.get(memberId);
           if (!source?.isGif || !duplicateId) {
             continue;
@@ -925,18 +1079,20 @@ function App() {
   const reconcileFramesAfterNodeMove = (
     movedIds: number[],
     shiftKey: boolean,
+    sourceImages: BoardImage[] = images,
   ) => {
     if (movedIds.length === 0) {
       return;
     }
 
+    const sourceImageIdSet = new Set(sourceImages.map((item) => item.id));
+    const sourceImageById = new Map(sourceImages.map((item) => [item.id, item]));
+
     setFrames((current) => {
       let nextFrames = current
         .map((frame) => ({
           ...frame,
-          memberIds: frame.memberIds.filter((memberId) =>
-            images.some((item) => item.id === memberId),
-          ),
+          memberIds: frame.memberIds.filter((memberId) => sourceImageIdSet.has(memberId)),
         }))
         .filter((frame) => frame.memberIds.length > 0);
 
@@ -954,8 +1110,8 @@ function App() {
           const remainingIds = nextMemberIds.filter(
             (memberId) => memberId !== movedId,
           );
-          const bounds = getFrameBounds(remainingIds, images);
-          const movedItem = images.find((item) => item.id === movedId);
+          const bounds = getFrameBoundsFromMap(remainingIds, sourceImageById);
+          const movedItem = sourceImageById.get(movedId);
           if (!bounds || !movedItem) {
             nextMemberIds = remainingIds;
             continue;
@@ -991,7 +1147,7 @@ function App() {
       });
 
       for (const movedId of movedIds) {
-        const movedItem = images.find((item) => item.id === movedId);
+        const movedItem = sourceImageById.get(movedId);
         if (!movedItem) {
           continue;
         }
@@ -1003,7 +1159,7 @@ function App() {
           .filter((frame) => !frame.collapsed)
           .sort((a, b) => b.z - a.z)
           .find((frame) => {
-            const bounds = getFrameBounds(frame.memberIds, images);
+            const bounds = getFrameBoundsFromMap(frame.memberIds, sourceImageById);
             return (
               bounds &&
               centerX >= bounds.left &&
@@ -1100,7 +1256,7 @@ function App() {
   };
 
   useEffect(() => {
-    documentRef.current = cloneDocument(boardDocument);
+    documentRef.current = boardDocument;
   }, [boardDocument]);
 
   useEffect(() => {
@@ -1115,10 +1271,17 @@ function App() {
         220,
         Math.min(maxWidth, inspectorResize.startWidth + delta),
       );
-      boardSettingsStore.setValue(INSPECTOR_WIDTH_SETTING_ID, nextWidth);
+      setLiveInspectorWidth(nextWidth);
     };
 
     const stopResize = () => {
+      if (
+        liveInspectorWidth !== null &&
+        liveInspectorWidth !== inspectorResize.startWidth
+      ) {
+        boardSettingsStore.setValue(INSPECTOR_WIDTH_SETTING_ID, liveInspectorWidth);
+      }
+      setLiveInspectorWidth(null);
       setInspectorResize(null);
     };
 
@@ -1130,7 +1293,7 @@ function App() {
       window.removeEventListener("pointerup", stopResize);
       window.removeEventListener("pointercancel", stopResize);
     };
-  }, [inspectorResize]);
+  }, [inspectorResize, liveInspectorWidth]);
 
   useEffect(() => {
     const decoderCache = gifDecoderCacheRef.current;
@@ -1151,17 +1314,20 @@ function App() {
   }, []);
 
   useEffect(() => {
-    for (const item of images) {
-      if (item.mediaKind !== "video") {
-        continue;
-      }
+    const videoEntries = images
+      .filter((item) => item.mediaKind === "video")
+      .map((item) => ({
+        id: item.id,
+        paused: item.paused,
+      }));
 
-      const video = videoRefs.current[item.id];
+    for (const entry of videoEntries) {
+      const video = videoRefs.current[entry.id];
       if (!video) {
         continue;
       }
 
-      if (item.paused) {
+      if (entry.paused) {
         video.pause();
         continue;
       }
@@ -1170,7 +1336,12 @@ function App() {
         // Keep state as source of truth; browser may block play in rare cases.
       });
     }
-  }, [images]);
+  }, [
+    images
+      .filter((item) => item.mediaKind === "video")
+      .map((item) => `${item.id}:${item.paused ? 1 : 0}`)
+      .join("|"),
+  ]);
 
   const applyScaleMode = () => {
     if (!scaleMode) {
@@ -1260,23 +1431,7 @@ function App() {
       setFrames(restoredDocument.frames);
       setMediaTransforms(restoredDocument.mediaTransforms);
       boardSettingsStore.setValue(DARK_MODE_SETTING_ID, restoredDocument.darkMode);
-      documentRef.current = {
-        images: restoredDocument.images.map((image) => ({
-          ...image,
-          mediaItems: image.mediaItems?.map((mediaItem) => ({ ...mediaItem })),
-        })),
-        frames: restoredDocument.frames.map((frame) => ({
-          ...frame,
-          memberIds: [...frame.memberIds],
-        })),
-        mediaTransforms: Object.fromEntries(
-          Object.entries(restoredDocument.mediaTransforms).map(([id, settings]) => [
-            Number(id),
-            { ...settings },
-          ]),
-        ),
-        darkMode: restoredDocument.darkMode,
-      };
+      documentRef.current = restoredDocument;
 
       setSelectedFrameId(null);
       setSelectedId(null);
@@ -1288,7 +1443,9 @@ function App() {
       setGroupOverlay(null);
       setPan(null);
       setMarquee(null);
-      setVideoTimelines({});
+      videoTimelinesRef.current = {};
+      setActiveVideoTimeline(undefined);
+      setInteractionPreview(null);
       setGifFrameCounts({});
       setGifSeekFrames({});
       setBrokenMediaIds({});
@@ -1334,29 +1491,73 @@ function App() {
       return;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      const snapshot = buildSnapshot(
-        images,
-        activeFrames,
-        activeMediaTransforms,
-        darkMode,
-      );
+    if (
+      interaction ||
+      interactionPreview ||
+      scaleMode ||
+      moveMode ||
+      pan ||
+      marquee ||
+      inspectorResize
+    ) {
+      return;
+    }
 
-      void savePersistedBoardSnapshot(JSON.stringify(snapshot)).catch((error) => {
-        console.warn("Unable to persist board state", error);
+    let cancelIdleTask = () => {};
+    const timeoutId = window.setTimeout(() => {
+      cancelIdleTask = scheduleIdleTask(() => {
+        const snapshot = buildSnapshot(
+          images,
+          activeFrames,
+          activeMediaTransforms,
+          darkMode,
+        );
+
+        void savePersistedBoardSnapshot(JSON.stringify(snapshot)).catch((error) => {
+          console.warn("Unable to persist board state", error);
+        });
       });
     }, BOARD_PERSISTENCE_DEBOUNCE_MS);
 
     return () => {
       window.clearTimeout(timeoutId);
+      cancelIdleTask();
     };
   }, [
     activeFrames,
     activeMediaTransforms,
     darkMode,
     images,
+    inspectorResize,
+    interaction,
+    interactionPreview,
+    marquee,
+    moveMode,
+    pan,
     persistenceHydrated,
+    scaleMode,
   ]);
+
+  useEffect(() => {
+    if (effectiveSeekPanelId === null) {
+      setActiveVideoTimeline(undefined);
+      return;
+    }
+
+    const video = videoRefs.current[effectiveSeekPanelId];
+    if (video) {
+      const currentTimeline = {
+        current: video.currentTime,
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+      };
+      videoTimelinesRef.current[effectiveSeekPanelId] = currentTimeline;
+      setActiveVideoTimeline(currentTimeline);
+      return;
+    }
+
+    const timeline = videoTimelinesRef.current[effectiveSeekPanelId];
+    setActiveVideoTimeline(timeline);
+  }, [effectiveSeekPanelId]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1491,7 +1692,7 @@ function App() {
         event.preventDefault();
 
         const memberIds = selectedIds.filter((id) =>
-          images.some((item) => item.id === id),
+          imageIdSet.has(id),
         );
         if (memberIds.length < 2) {
           return;
@@ -1726,7 +1927,7 @@ function App() {
           return;
         }
 
-        const selectedMedia = images.find((item) => item.id === activeId);
+        const selectedMedia = imageById.get(activeId);
         if (
           !selectedMedia ||
           (selectedMedia.mediaKind !== "video" && !selectedMedia.isGif)
@@ -2220,11 +2421,10 @@ function App() {
       }),
     }));
 
-    setVideoTimelines((current) => {
-      const next = { ...current };
-      delete next[nodeId];
-      return next;
-    });
+    delete videoTimelinesRef.current[nodeId];
+    if (effectiveSeekPanelId === nodeId) {
+      setActiveVideoTimeline(undefined);
+    }
     setGifFrameCounts((current) => {
       const next = { ...current };
       delete next[nodeId];
@@ -2701,33 +2901,31 @@ function App() {
 
       setImages((current) => [...current, ...duplicatedItems]);
 
-      setVideoTimelines((current) => {
-        const next = { ...current };
-        for (const sourceId of sourceIds) {
-          const duplicateId = idMap.get(sourceId);
-          if (!duplicateId) {
-            continue;
-          }
-
-          const source = images.find((item) => item.id === sourceId);
-          const sourceVideo =
-            source?.mediaKind === "video" ? videoRefs.current[sourceId] : null;
-          const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null;
-          const sourceVideoDuration =
-            sourceVideo && Number.isFinite(sourceVideo.duration)
-              ? sourceVideo.duration
-              : (videoTimelines[sourceId]?.duration ?? 0);
-
-          if (sourceVideoTime !== null) {
-            pendingVideoSeekRef.current[duplicateId] = sourceVideoTime;
-            next[duplicateId] = {
-              current: sourceVideoTime,
-              duration: sourceVideoDuration,
-            };
-          }
+      const nextVideoTimelines = { ...videoTimelinesRef.current };
+      for (const sourceId of sourceIds) {
+        const duplicateId = idMap.get(sourceId);
+        if (!duplicateId) {
+          continue;
         }
-        return next;
-      });
+
+        const source = imageById.get(sourceId);
+        const sourceVideo =
+          source?.mediaKind === "video" ? videoRefs.current[sourceId] : null;
+        const sourceVideoTime = sourceVideo ? sourceVideo.currentTime : null;
+        const sourceVideoDuration =
+          sourceVideo && Number.isFinite(sourceVideo.duration)
+            ? sourceVideo.duration
+            : (videoTimelinesRef.current[sourceId]?.duration ?? 0);
+
+        if (sourceVideoTime !== null) {
+          pendingVideoSeekRef.current[duplicateId] = sourceVideoTime;
+          nextVideoTimelines[duplicateId] = {
+            current: sourceVideoTime,
+            duration: sourceVideoDuration,
+          };
+        }
+      }
+      videoTimelinesRef.current = nextVideoTimelines;
 
       setGifSeekFrames((current) => {
         const next = { ...current };
@@ -3205,81 +3403,79 @@ function App() {
     if (interaction.kind === "move") {
       const x = point.x - interaction.offsetX;
       const y = point.y - interaction.offsetY;
+      const startItem = imageById.get(interaction.id);
+      if (!startItem) {
+        return;
+      }
 
-      setImages((current) =>
-        current.map((item) =>
-          item.id === interaction.id
-            ? {
-                ...item,
-                x,
-                y,
-              }
-            : item,
-        ),
-      );
+      setInteractionPreview({
+        [interaction.id]: {
+          x,
+          y,
+          width: startItem.width,
+        },
+      });
       return;
     }
 
     if (interaction.kind === "resize") {
       const deltaX = point.x - interaction.startPointerX;
-      setImages((current) =>
-        current.map((item) => {
-          if (item.id !== interaction.id) {
-            return item;
-          }
+      const startItem = imageById.get(interaction.id);
+      if (!startItem) {
+        return;
+      }
 
-          return {
-            ...item,
-            width: Math.max(MIN_IMAGE_WIDTH, interaction.startWidth + deltaX),
-          };
-        }),
-      );
+      setInteractionPreview({
+        [interaction.id]: {
+          x: startItem.x,
+          y: startItem.y,
+          width: Math.max(MIN_IMAGE_WIDTH, interaction.startWidth + deltaX),
+        },
+      });
       return;
     }
 
     if (interaction.kind === "move-group") {
       const deltaX = point.x - interaction.startPointerX;
       const deltaY = point.y - interaction.startPointerY;
+      const nextPreview: InteractionPreview = {};
+      for (const id of interaction.ids) {
+        const start = interaction.startPositions[id];
+        const startItem = imageById.get(id);
+        if (!start || !startItem) {
+          continue;
+        }
 
-      setImages((current) =>
-        current.map((item) => {
-          if (!interaction.ids.includes(item.id)) {
-            return item;
-          }
+        nextPreview[id] = {
+          x: start.x + deltaX,
+          y: start.y + deltaY,
+          width: startItem.width,
+        };
+      }
 
-          const start = interaction.startPositions[item.id];
-          if (!start) {
-            return item;
-          }
-
-          return {
-            ...item,
-            x: start.x + deltaX,
-            y: start.y + deltaY,
-          };
-        }),
-      );
+      setInteractionPreview(nextPreview);
       return;
     }
 
     if (interaction.kind === "move-frame") {
       const deltaX = point.x - interaction.startPointerX;
       const deltaY = point.y - interaction.startPointerY;
+      const nextPreview: InteractionPreview = {};
+      for (const [idText, start] of Object.entries(interaction.startPositions)) {
+        const id = Number(idText);
+        const startItem = imageById.get(id);
+        if (!startItem) {
+          continue;
+        }
 
-      setImages((current) =>
-        current.map((item) => {
-          const start = interaction.startPositions[item.id];
-          if (!start) {
-            return item;
-          }
+        nextPreview[id] = {
+          x: start.x + deltaX,
+          y: start.y + deltaY,
+          width: startItem.width,
+        };
+      }
 
-          return {
-            ...item,
-            x: start.x + deltaX,
-            y: start.y + deltaY,
-          };
-        }),
-      );
+      setInteractionPreview(nextPreview);
       return;
     }
 
@@ -3392,33 +3588,41 @@ function App() {
     const rawScale =
       (interaction.startBounds.width + deltaX) / interaction.startBounds.width;
     const scale = Math.max(interaction.minScale, rawScale);
+    const nextPreview: InteractionPreview = {};
+    for (const id of interaction.ids) {
+      const start = interaction.startItems[id];
+      if (!start) {
+        continue;
+      }
 
-    setImages((current) =>
-      current.map((item) => {
-        if (!interaction.ids.includes(item.id)) {
-          return item;
-        }
+      nextPreview[id] = {
+        x:
+          interaction.startBounds.left +
+          (start.x - interaction.startBounds.left) * scale,
+        y:
+          interaction.startBounds.top +
+          (start.y - interaction.startBounds.top) * scale,
+        width: Math.max(MIN_IMAGE_WIDTH, start.width * scale),
+      };
+    }
 
-        const start = interaction.startItems[item.id];
-        if (!start) {
-          return item;
-        }
-
-        return {
-          ...item,
-          x:
-            interaction.startBounds.left +
-            (start.x - interaction.startBounds.left) * scale,
-          y:
-            interaction.startBounds.top +
-            (start.y - interaction.startBounds.top) * scale,
-          width: Math.max(MIN_IMAGE_WIDTH, start.width * scale),
-        };
-      }),
-    );
+    setInteractionPreview(nextPreview);
   };
 
   const stopDrag = (event?: ReactPointerEvent<HTMLElement>) => {
+    const previewImages = applyInteractionPreviewToImages(images, interactionPreview);
+    const previewImageById = new Map(previewImages.map((item) => [item.id, item]));
+    const commitPreview =
+      interactionPreview &&
+      interaction &&
+      interaction.kind !== "extract-slide"
+        ? interactionPreview
+        : null;
+
+    if (commitPreview) {
+      setImages((current) => applyInteractionPreviewToImages(current, commitPreview));
+    }
+
     const shouldMergeOnDrop =
       Boolean(event?.shiftKey || keyStateRef.current.shift) &&
       interaction?.kind === "move" &&
@@ -3431,10 +3635,10 @@ function App() {
         const sourceId = interaction.id;
         let createdFrameId: number | null = null;
 
-        const sourceNode = images.find((item) => item.id === sourceId);
+        const sourceNode = previewImageById.get(sourceId);
         if (sourceNode) {
           const sourceRect = getItemRect(sourceNode);
-          const targetNode = [...images]
+          const targetNode = [...previewImages]
             .filter((item) => item.id !== sourceId && item.z < sourceNode.z)
             .sort((a, b) => b.z - a.z)
             .find((item) => {
@@ -3454,12 +3658,8 @@ function App() {
             });
 
           if (targetNode) {
-            const sourceFrame = activeFrames.find((frame) =>
-              frame.memberIds.includes(sourceId),
-            );
-            const targetFrame = activeFrames.find((frame) =>
-              frame.memberIds.includes(targetNode.id),
-            );
+            const sourceFrame = activeFrameByMemberId.get(sourceId) ?? null;
+            const targetFrame = activeFrameByMemberId.get(targetNode.id) ?? null;
 
             if (targetFrame && sourceFrame?.id !== targetFrame.id) {
               setFrames((currentFrames) =>
@@ -3524,14 +3724,16 @@ function App() {
       reconcileFramesAfterNodeMove(
         [interaction.id],
         Boolean(event?.shiftKey || keyStateRef.current.shift),
+        previewImages,
       );
     } else if (interaction?.kind === "move-group") {
       reconcileFramesAfterNodeMove(
         interaction.ids,
         Boolean(event?.shiftKey || keyStateRef.current.shift),
+        previewImages,
       );
     } else if (interaction?.kind === "resize") {
-      reconcileFramesAfterNodeMove([interaction.id], false);
+      reconcileFramesAfterNodeMove([interaction.id], false, previewImages);
     } else if (interaction?.kind === "move-frame") {
       const shouldCombineFrames =
         Boolean(event?.shiftKey || keyStateRef.current.shift) && event;
@@ -3545,7 +3747,7 @@ function App() {
             .filter((frame) => frame.id !== sourceFrame.id)
             .sort((a, b) => b.z - a.z)
             .find((frame) => {
-              const bounds = getFrameBounds(frame.memberIds, images);
+              const bounds = getFrameBoundsFromMap(frame.memberIds, previewImageById);
               return (
                 bounds &&
                 point.x >= bounds.left &&
@@ -3591,6 +3793,7 @@ function App() {
       );
     }
 
+    setInteractionPreview(null);
     setInteraction(null);
     setPan(null);
     setMarquee(null);
@@ -3811,7 +4014,11 @@ function App() {
                   bounds={displayBounds}
                   selected={selectedFrameId === frame.id}
                   renameRequested={renamingFrameId === frame.id}
-                  displayZIndex={Math.min(...frame.memberIds.map((id) => images.find((item) => item.id === id)?.z ?? frame.z)) - 1}
+                  displayZIndex={
+                    Math.min(
+                      ...frame.memberIds.map((id) => displayImageById.get(id)?.z ?? frame.z),
+                    ) - 1
+                  }
                   activeItem={activeItem}
                   previewItems={previewItems}
                   hiddenCount={frame.memberIds.length}
@@ -3885,7 +4092,9 @@ function App() {
                   effectiveSeekPanelId === image.id &&
                   (image.mediaKind === "video" || image.isGif)
                 }
-                videoTimeline={videoTimelines[image.id]}
+                videoTimeline={
+                  effectiveSeekPanelId === image.id ? currentSeekVideoTimeline : undefined
+                }
                 gifFrameCount={gifFrameCounts[image.id] ?? 1}
                 gifSeekFrame={gifSeekFrames[image.id] ?? 0}
                 onPointerDown={onPointerDown}
@@ -3957,13 +4166,10 @@ function App() {
                     ? videoEl.duration
                     : 0;
 
-                  setVideoTimelines((current) => ({
-                    ...current,
-                    [id]: {
-                      current: videoEl.currentTime,
-                      duration: nextDuration,
-                    },
-                  }));
+                  writeVideoTimeline(id, {
+                    current: videoEl.currentTime,
+                    duration: nextDuration,
+                  });
 
                   setImages((current) =>
                     current.map((item) => {
@@ -3987,28 +4193,23 @@ function App() {
                 }}
                 onVideoTimeUpdate={(id, event) => {
                   const videoEl = event.currentTarget;
-                  setVideoTimelines((current) => {
-                    const previous = current[id];
-                    const nextValue = {
-                      current: videoEl.currentTime,
-                      duration: Number.isFinite(videoEl.duration)
-                        ? videoEl.duration
-                        : (previous?.duration ?? 0),
-                    };
+                  const previous = videoTimelinesRef.current[id];
+                  const nextValue = {
+                    current: videoEl.currentTime,
+                    duration: Number.isFinite(videoEl.duration)
+                      ? videoEl.duration
+                      : (previous?.duration ?? 0),
+                  };
 
-                    if (
-                      previous &&
-                      Math.abs(previous.current - nextValue.current) < 0.02 &&
-                      Math.abs(previous.duration - nextValue.duration) < 0.02
-                    ) {
-                      return current;
-                    }
+                  if (
+                    previous &&
+                    Math.abs(previous.current - nextValue.current) < 0.02 &&
+                    Math.abs(previous.duration - nextValue.duration) < 0.02
+                  ) {
+                    return;
+                  }
 
-                    return {
-                      ...current,
-                      [id]: nextValue,
-                    };
-                  });
+                  writeVideoTimeline(id, nextValue);
                 }}
                 onMediaError={(id) => {
                   fallbackNodeMediaToEmbeddedData(id);
@@ -4080,13 +4281,11 @@ function App() {
                     video.currentTime = nextTime;
                   }
 
-                  setVideoTimelines((current) => ({
-                    ...current,
-                    [id]: {
-                      current: nextTime,
-                      duration: current[id]?.duration ?? video?.duration ?? 0,
-                    },
-                  }));
+                  writeVideoTimeline(id, {
+                    current: nextTime,
+                    duration:
+                      videoTimelinesRef.current[id]?.duration ?? video?.duration ?? 0,
+                  });
                 }}
                 onSeekGif={onGifSeek}
               />
@@ -4215,7 +4414,7 @@ function App() {
             event.preventDefault();
             setInspectorResize({
               startX: event.clientX,
-              startWidth: inspectorWidth,
+              startWidth: liveInspectorWidth ?? inspectorWidth,
             });
           }}
         />

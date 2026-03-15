@@ -1,5 +1,6 @@
-import type { BoardImage } from '../model'
-import MediaShineFx from './MediaShineFx'
+import { useState } from "react";
+import type { BoardImage } from "../model";
+import MediaShineFx from "./MediaShineFx";
 
 type MediaBodyProps = {
   image: BoardImage
@@ -32,6 +33,8 @@ function MediaBody({
   onImageLoad,
   onImageError,
 }: MediaBodyProps) {
+  const [shineActive, setShineActive] = useState(false);
+
   if (broken || !image.src) {
     return (
       <div
@@ -47,7 +50,12 @@ function MediaBody({
 
   if (image.mediaKind === 'video') {
     return (
-      <div className="media-frame node-body" style={{ height: `${displayWidth * image.aspect}px` }}>
+      <div
+        className="media-frame node-body"
+        style={{ height: `${displayWidth * image.aspect}px` }}
+        onPointerEnter={() => setShineActive(true)}
+        onPointerLeave={() => setShineActive(false)}
+      >
         <video
           className="media-content"
           src={image.src}
@@ -66,13 +74,18 @@ function MediaBody({
           onTimeUpdate={onVideoTimeUpdate}
           onError={onVideoError}
         />
-        <MediaShineFx />
+        <MediaShineFx active={shineActive} />
       </div>
     )
   }
 
   return (
-    <div className="media-frame node-body" style={{ height: `${displayWidth * image.aspect}px` }}>
+    <div
+      className="media-frame node-body"
+      style={{ height: `${displayWidth * image.aspect}px` }}
+      onPointerEnter={() => setShineActive(true)}
+      onPointerLeave={() => setShineActive(false)}
+    >
       {shouldUseBlurBg && (
         <img className="media-bg-blur" src={displayImageSrc} alt="" draggable={false} aria-hidden="true" />
       )}
@@ -88,7 +101,7 @@ function MediaBody({
         onLoad={onImageLoad}
         onError={onImageError}
       />
-      <MediaShineFx />
+      <MediaShineFx active={shineActive} />
     </div>
   )
 }

@@ -7,6 +7,8 @@ export type MoveFrameState = {
   startPointerX: number;
   startPointerY: number;
   startPositions: Record<number, { x: number; y: number }>;
+  deltaX?: number;
+  deltaY?: number;
 };
 
 export type DragState = {
@@ -14,6 +16,8 @@ export type DragState = {
   id: number;
   offsetX: number;
   offsetY: number;
+  previewX?: number;
+  previewY?: number;
 };
 
 export type ResizeState = {
@@ -21,6 +25,7 @@ export type ResizeState = {
   id: number;
   startWidth: number;
   startPointerX: number;
+  previewWidth?: number;
 };
 
 export type GroupMoveState = {
@@ -29,6 +34,8 @@ export type GroupMoveState = {
   startPointerX: number;
   startPointerY: number;
   startPositions: Record<number, { x: number; y: number }>;
+  deltaX?: number;
+  deltaY?: number;
 };
 
 export type GroupResizeState = {
@@ -38,6 +45,7 @@ export type GroupResizeState = {
   startBounds: GroupBounds;
   startItems: Record<number, { x: number; y: number; width: number }>;
   minScale: number;
+  previewScale?: number;
 };
 
 export type ExtractSlideState = {

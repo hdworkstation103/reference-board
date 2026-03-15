@@ -154,11 +154,14 @@ function ShaderSurface({
     resize();
 
     const render = (timestamp: number) => {
+      frameId = 0;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+
       if (startTime === 0) {
         startTime = timestamp;
       }
-
-      resize();
 
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -207,15 +210,42 @@ function ShaderSurface({
       frameId = window.requestAnimationFrame(render);
     };
 
+    const scheduleRender = () => {
+      if (frameId !== 0) {
+        return;
+      }
+
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+
+      frameId = window.requestAnimationFrame(render);
+    };
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        if (frameId !== 0) {
+          window.cancelAnimationFrame(frameId);
+          frameId = 0;
+        }
+        return;
+      }
+
+      scheduleRender();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     setStatus({
       ready: true,
       validationError: null,
       runtimeError: null,
       runtimeWarning: null,
     });
-    frameId = window.requestAnimationFrame(render);
+    scheduleRender();
 
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
       gl.deleteBuffer(positionBuffer);
