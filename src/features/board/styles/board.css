@@ -539,10 +539,13 @@ label.menu-item {
 
 .board-wrap {
   flex: 1;
+  position: relative;
   overflow: auto;
   touch-action: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  background-color: #f8fafc;
+  isolation: isolate;
 }
 
 .board-wrap::-webkit-scrollbar {
@@ -565,11 +568,47 @@ label.menu-item {
 
 .board {
   position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
+.board-viewport-background-anchor {
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.board-viewport-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.board-viewport-grid,
+.board-viewport-shader {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.board-viewport-grid {
   background-color: #f8fafc;
   background-image:
     linear-gradient(#e4e9ef 1px, transparent 1px),
     linear-gradient(90deg, #e4e9ef 1px, transparent 1px);
   background-size: 32px 32px;
+}
+
+.board-viewport-shader {
+  display: block;
+  opacity: calc(0.88 * var(--shader-composite-opacity, 1));
 }
 
 .context-menu-layer {
@@ -855,6 +894,14 @@ label.menu-item {
 }
 
 .app-shell.dark .board {
+  background: transparent;
+}
+
+.app-shell.dark .board-wrap {
+  background-color: #1e1e1e;
+}
+
+.app-shell.dark .board-viewport-grid {
   background-color: #1e1e1e;
   background-image:
     linear-gradient(#2a2d2e 1px, transparent 1px),

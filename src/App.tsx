@@ -3636,9 +3636,11 @@ function App() {
           boardWrapRef={boardWrapRef}
           boardWidth={WORLD_SIZE}
           boardHeight={WORLD_SIZE}
+          darkMode={darkMode}
           isPanning={Boolean(pan)}
           isScaleMode={Boolean(scaleMode)}
           isMoveMode={Boolean(moveMode)}
+          shaderCompositingEnabled={shaderCompositingEnabled}
           onContextMenu={(event) => {
             event.preventDefault();
 
