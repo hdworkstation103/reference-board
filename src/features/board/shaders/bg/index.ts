@@ -1,6 +1,7 @@
 import { AURORA_DRIFT_SHADER_FS } from './auroraDrift'
 import { CONTOUR_FLOW_SHADER_FS } from './contourFlow'
 import { LIQUID_METAL_SHADER_FS } from './liquidMetal'
+import { MUSEUM_CLOUDS_SHADER_FS } from './museumClouds'
 import { NOISE_BLOOM_SHADER_FS } from './noiseBloom'
 import { SOFT_CELLS_SHADER_FS } from './softCells'
 
@@ -35,6 +36,11 @@ export const BACKGROUND_SHADER_OPTIONS: readonly BackgroundShaderOption[] = [
     id: 'noise-bloom',
     label: 'Noise Bloom',
     fs: NOISE_BLOOM_SHADER_FS,
+  },
+  {
+    id: 'museum-clouds',
+    label: 'Museum Clouds',
+    fs: MUSEUM_CLOUDS_SHADER_FS,
   },
 ]
 
