@@ -1,5 +1,83 @@
 import type { BoardImage, NodeMediaItem } from "../model";
 
+type FileSystemFileEntryLike = FileSystemFileEntry & {
+  file: (
+    successCallback: (file: File) => void,
+    errorCallback?: (error: DOMException) => void,
+  ) => void
+}
+
+type FileSystemDirectoryReaderLike = {
+  readEntries: (
+    successCallback: (entries: FileSystemEntry[]) => void,
+    errorCallback?: (error: DOMException) => void,
+  ) => void
+}
+
+type FileSystemDirectoryEntryLike = FileSystemDirectoryEntry & {
+  createReader: () => FileSystemDirectoryReaderLike
+}
+
+type DataTransferItemWithEntry = DataTransferItem & {
+  webkitGetAsEntry?: () => FileSystemEntry | null
+}
+
+type DroppedMediaFile = {
+  file: File
+  relativePath: string
+}
+
+const isMediaFile = (file: File) =>
+  file.type.startsWith('image/') || file.type.startsWith('video/')
+
+const readFileEntry = (entry: FileSystemFileEntryLike) =>
+  new Promise<File>((resolve, reject) => {
+    entry.file(resolve, (error) => reject(error))
+  })
+
+const readDirectoryEntries = async (
+  directory: FileSystemDirectoryEntryLike,
+) => {
+  const reader = directory.createReader()
+  const entries: FileSystemEntry[] = []
+
+  while (true) {
+    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
+      reader.readEntries(resolve, (error) => reject(error))
+    })
+
+    if (batch.length === 0) {
+      break
+    }
+
+    entries.push(...batch)
+  }
+
+  return entries
+}
+
+const collectEntryMediaFiles = async (
+  entry: FileSystemEntry,
+  parentPath = '',
+): Promise<DroppedMediaFile[]> => {
+  const relativePath = parentPath ? `${parentPath}/${entry.name}` : entry.name
+
+  if (entry.isFile) {
+    const file = await readFileEntry(entry as FileSystemFileEntryLike)
+    return isMediaFile(file) ? [{ file, relativePath }] : []
+  }
+
+  if (!entry.isDirectory) {
+    return []
+  }
+
+  const children = await readDirectoryEntries(entry as FileSystemDirectoryEntryLike)
+  const nested = await Promise.all(
+    children.map((child) => collectEntryMediaFiles(child, relativePath)),
+  )
+  return nested.flat()
+}
+
 export const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
@@ -120,8 +198,59 @@ export const extractDropSourceUrls = (dataTransfer: DataTransfer) => {
   return urls
 }
 
+export const extractDroppedMediaFiles = async (transfer: DataTransfer | null) => {
+  if (!transfer) {
+    return {
+      files: [] as File[],
+      topLevelDirectoryNames: [] as string[],
+      fromDirectory: false,
+    }
+  }
+
+  const entryItems = Array.from(transfer.items)
+    .map((item) => (item as DataTransferItemWithEntry).webkitGetAsEntry?.() ?? null)
+    .filter((entry) => entry !== null) as FileSystemEntry[]
+
+  const topLevelDirectoryNames = entryItems
+    .filter((entry) => entry.isDirectory)
+    .map((entry) => entry.name)
+
+  if (topLevelDirectoryNames.length > 0) {
+    const droppedFiles = (await Promise.all(
+      entryItems.map((entry) => collectEntryMediaFiles(entry)),
+    ))
+      .flat()
+      .sort((left, right) => left.relativePath.localeCompare(right.relativePath))
+
+    return {
+      files: droppedFiles.map(({ file }) => file),
+      topLevelDirectoryNames,
+      fromDirectory: true,
+    }
+  }
+
+  const directFiles = Array.from(transfer.files).filter(isMediaFile)
+  const relativeTopLevelDirectories = Array.from(
+    new Set(
+      directFiles
+        .map((file) => file.webkitRelativePath.split('/')[0] ?? '')
+        .filter((name) => name.length > 0),
+    ),
+  )
+
+  return {
+    files: directFiles.sort((left, right) =>
+      (left.webkitRelativePath || left.name).localeCompare(
+        right.webkitRelativePath || right.name,
+      ),
+    ),
+    topLevelDirectoryNames: relativeTopLevelDirectories,
+    fromDirectory: relativeTopLevelDirectories.length > 0,
+  }
+}
+
 export const createMediaItemFromFile = async (file: File, sourceUrl?: string): Promise<NodeMediaItem | null> => {
-  if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+  if (!isMediaFile(file)) {
     return null
   }
 
