@@ -1,5 +1,10 @@
 import { CARD_BORDER_HEIGHT, CAPTION_HEIGHT } from "../constants";
-import type { BoardImage, GroupBounds, ItemRect } from "../model";
+import type {
+  BoardImage,
+  GroupBounds,
+  ItemRect,
+  ViewportBounds,
+} from "../model";
 
 export const FRAME_PADDING_X = 28;
 export const FRAME_PADDING_TOP = 40;
@@ -70,3 +75,50 @@ export const hasSameMembers = (a: number[], b: number[]) => {
   const bSet = new Set(b);
   return a.every((id) => bSet.has(id));
 };
+
+export const createViewportBounds = (
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): ViewportBounds => ({
+  left,
+  top,
+  right: left + width,
+  bottom: top + height,
+  width,
+  height,
+});
+
+export const expandViewportBounds = (
+  viewport: ViewportBounds,
+  padding: number,
+): ViewportBounds =>
+  createViewportBounds(
+    viewport.left - padding,
+    viewport.top - padding,
+    viewport.width + padding * 2,
+    viewport.height + padding * 2,
+  );
+
+export const doesItemRectIntersectViewport = (
+  rect: ItemRect,
+  viewport: ViewportBounds,
+) =>
+  !(
+    rect.left > viewport.right ||
+    rect.right < viewport.left ||
+    rect.top > viewport.bottom ||
+    rect.bottom < viewport.top
+  );
+
+export const doesGroupBoundsIntersectViewport = (
+  bounds: GroupBounds,
+  viewport: ViewportBounds,
+) =>
+  !(
+    bounds.left > viewport.right ||
+    bounds.left + bounds.width < viewport.left ||
+    bounds.top > viewport.bottom ||
+    bounds.top + bounds.height < viewport.top
+  );

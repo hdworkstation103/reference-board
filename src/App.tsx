@@ -14,13 +14,16 @@ import {
   BoardNode,
   BoardViewport,
   boardSettingsStore,
-  buildSnapshot,
+  buildSnapshotWithMaterializedMedia,
   clearPersistedBoardSnapshot,
   ContextMenu,
   createMediaItemFromFile,
+  createViewportBounds,
   DEFAULT_BACKGROUND_SHADER_ID,
+  doesGroupBoundsIntersectViewport,
+  doesItemRectIntersectViewport,
+  expandViewportBounds,
   extractDropSourceUrls,
-  fileToDataUrl,
   FrameNode,
   getBackgroundShaderOption,
   getGroupBounds,
@@ -31,6 +34,7 @@ import {
   hasSameMembers,
   IMAGE_WIDTH,
   InspectorPanel,
+  isBlobUrl,
   loadPersistedBoardSnapshot,
   MIN_IMAGE_WIDTH,
   NOTE_DEFAULT_ASPECT,
@@ -68,6 +72,7 @@ import type {
   ParsedSnapshot,
   PreparedMedia,
   ScaleModeState,
+  ViewportBounds,
 } from "./features/board";
 
 type GifFrameLike = CanvasImageSource & {
@@ -123,6 +128,7 @@ const DEFAULT_MEDIA_TRANSFORM: MediaTransformSettings = {
 
 const BOARD_PERSISTENCE_DEBOUNCE_MS = 500;
 const MAX_HISTORY_ENTRIES = 50;
+const BOARD_CULLING_PADDING_PX = 600;
 const DARK_MODE_SETTING_ID = "appearance.darkMode";
 const SELECTION_SHADER_SETTING_ID = "rendering.selectionShader";
 const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
@@ -292,6 +298,9 @@ function App() {
   const [liveInspectorWidth, setLiveInspectorWidth] = useState<number | null>(
     null,
   );
+  const [viewportBounds, setViewportBounds] = useState<ViewportBounds | null>(
+    null,
+  );
   const [inspectorResize, setInspectorResize] = useState<{
     startX: number;
     startWidth: number;
@@ -309,6 +318,7 @@ function App() {
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
   const videoTimelinesRef = useRef<Record<number, MediaTimeline>>({});
   const pendingVideoSeekRef = useRef<Record<number, number>>({});
+  const trackedBlobUrlsRef = useRef<Set<string>>(new Set());
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const keyStateRef = useRef({ shift: false });
   const slideshowTimersRef = useRef<Record<number, number>>({});
@@ -403,6 +413,86 @@ function App() {
     () => displayImages.filter((item) => !collapsedFrameMemberIds.has(item.id)),
     [collapsedFrameMemberIds, displayImages],
   );
+  const expandedViewportBounds = useMemo(
+    () =>
+      viewportBounds
+        ? expandViewportBounds(viewportBounds, BOARD_CULLING_PADDING_PX)
+        : null,
+    [viewportBounds],
+  );
+  const alwaysRenderImageIds = useMemo(() => {
+    const next = new Set<number>(selectedIds);
+    if (selectedId !== null) {
+      next.add(selectedId);
+    }
+    if (effectiveSeekPanelId !== null) {
+      next.add(effectiveSeekPanelId);
+    }
+    if (scaleMode) {
+      for (const id of scaleMode.ids) {
+        next.add(id);
+      }
+    }
+    if (moveMode) {
+      for (const id of moveMode.ids) {
+        next.add(id);
+      }
+    }
+    if (interaction?.kind === "move") {
+      next.add(interaction.id);
+    } else if (
+      interaction?.kind === "move-group" ||
+      interaction?.kind === "resize-group"
+    ) {
+      for (const id of interaction.ids) {
+        next.add(id);
+      }
+    } else if (interaction?.kind === "resize") {
+      next.add(interaction.id);
+    } else if (interaction?.kind === "move-frame") {
+      for (const id of Object.keys(interaction.startPositions)) {
+        next.add(Number(id));
+      }
+    } else if (interaction?.kind === "extract-slide") {
+      next.add(interaction.sourceId);
+    }
+    return next;
+  }, [
+    effectiveSeekPanelId,
+    interaction,
+    moveMode,
+    scaleMode,
+    selectedId,
+    selectedIds,
+  ]);
+  const renderedFrameViews = useMemo(() => {
+    if (!expandedViewportBounds) {
+      return frameViews;
+    }
+
+    return frameViews.filter(
+      ({ frame, bounds }) =>
+        selectedFrameId === frame.id ||
+        frame.memberIds.some((id) => alwaysRenderImageIds.has(id)) ||
+        doesGroupBoundsIntersectViewport(bounds, expandedViewportBounds),
+    );
+  }, [
+    alwaysRenderImageIds,
+    expandedViewportBounds,
+    frameViews,
+    selectedFrameId,
+  ]);
+  const renderedImages = useMemo(() => {
+    if (!expandedViewportBounds) {
+      return visibleImages;
+    }
+
+    return visibleImages.filter(
+      (item) =>
+        alwaysRenderImageIds.has(item.id) ||
+        doesItemRectIntersectViewport(getItemRect(item), expandedViewportBounds),
+    );
+  }, [alwaysRenderImageIds, expandedViewportBounds, visibleImages]);
   const boardDocument = useMemo<BoardDocument>(
     () => ({
       images,
@@ -1260,6 +1350,58 @@ function App() {
   }, [boardDocument]);
 
   useEffect(() => {
+    const wrapper = boardWrapRef.current;
+    if (!wrapper) {
+      return;
+    }
+
+    let frameId = 0;
+    const updateViewportBounds = () => {
+      frameId = 0;
+      const next = createViewportBounds(
+        wrapper.scrollLeft - WORLD_ORIGIN,
+        wrapper.scrollTop - WORLD_ORIGIN,
+        wrapper.clientWidth,
+        wrapper.clientHeight,
+      );
+      setViewportBounds((current) =>
+        current &&
+        current.left === next.left &&
+        current.top === next.top &&
+        current.width === next.width &&
+        current.height === next.height
+          ? current
+          : next,
+      );
+    };
+
+    const scheduleViewportBoundsUpdate = () => {
+      if (frameId !== 0) {
+        return;
+      }
+      frameId = window.requestAnimationFrame(updateViewportBounds);
+    };
+
+    scheduleViewportBoundsUpdate();
+
+    const resizeObserver = new ResizeObserver(() => {
+      scheduleViewportBoundsUpdate();
+    });
+    resizeObserver.observe(wrapper);
+    wrapper.addEventListener("scroll", scheduleViewportBoundsUpdate, {
+      passive: true,
+    });
+
+    return () => {
+      if (frameId !== 0) {
+        window.cancelAnimationFrame(frameId);
+      }
+      resizeObserver.disconnect();
+      wrapper.removeEventListener("scroll", scheduleViewportBoundsUpdate);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!inspectorResize) {
       return;
     }
@@ -1298,6 +1440,9 @@ function App() {
   useEffect(() => {
     const decoderCache = gifDecoderCacheRef.current;
     return () => {
+      for (const blobUrl of trackedBlobUrlsRef.current) {
+        URL.revokeObjectURL(blobUrl);
+      }
       for (const entry of Object.values(decoderCache)) {
         if (entry?.decoder && typeof entry.decoder.close === "function") {
           entry.decoder.close();
@@ -1312,6 +1457,34 @@ function App() {
       slideshowTimersRef.current = {};
     };
   }, []);
+
+  useEffect(() => {
+    const nextBlobUrls = new Set<string>();
+    for (const image of images) {
+      if (isBlobUrl(image.src)) {
+        nextBlobUrls.add(image.src);
+      }
+      if (isBlobUrl(image.sourceDataUrl)) {
+        nextBlobUrls.add(image.sourceDataUrl);
+      }
+      for (const mediaItem of image.mediaItems ?? []) {
+        if (isBlobUrl(mediaItem.src)) {
+          nextBlobUrls.add(mediaItem.src);
+        }
+        if (isBlobUrl(mediaItem.sourceDataUrl)) {
+          nextBlobUrls.add(mediaItem.sourceDataUrl);
+        }
+      }
+    }
+
+    for (const previousBlobUrl of trackedBlobUrlsRef.current) {
+      if (!nextBlobUrls.has(previousBlobUrl)) {
+        URL.revokeObjectURL(previousBlobUrl);
+      }
+    }
+
+    trackedBlobUrlsRef.current = nextBlobUrls;
+  }, [images]);
 
   useEffect(() => {
     const videoEntries = images
@@ -1506,16 +1679,18 @@ function App() {
     let cancelIdleTask = () => {};
     const timeoutId = window.setTimeout(() => {
       cancelIdleTask = scheduleIdleTask(() => {
-        const snapshot = buildSnapshot(
+        void buildSnapshotWithMaterializedMedia(
           images,
           activeFrames,
           activeMediaTransforms,
           darkMode,
-        );
-
-        void savePersistedBoardSnapshot(JSON.stringify(snapshot)).catch((error) => {
-          console.warn("Unable to persist board state", error);
-        });
+        )
+          .then((snapshot) =>
+            savePersistedBoardSnapshot(JSON.stringify(snapshot)),
+          )
+          .catch((error) => {
+            console.warn("Unable to persist board state", error);
+          });
       });
     }, BOARD_PERSISTENCE_DEBOUNCE_MS);
 
@@ -2292,22 +2467,22 @@ function App() {
           file,
           index,
         ): Promise<PreparedMedia & { sourceUrl?: string }> => {
-          const dataUrl = await fileToDataUrl(file);
-          const isGif =
-            file.type === "image/gif" ||
-            file.name.toLowerCase().endsWith(".gif");
           const sourceUrl =
             sourceUrls && sourceUrls.length > 0
               ? sourceUrls[Math.min(index, sourceUrls.length - 1)]
               : undefined;
+          const mediaItem = await createMediaItemFromFile(file, sourceUrl);
+          if (!mediaItem) {
+            throw new Error(`Unsupported media file: ${file.name}`);
+          }
           return {
             id: nextIdRef.current++,
-            src: dataUrl,
-            sourceDataUrl: dataUrl,
-            sourceUrl,
-            name: file.name,
-            mediaKind: file.type.startsWith("video/") ? "video" : "image",
-            isGif,
+            src: mediaItem.src,
+            sourceDataUrl: mediaItem.sourceDataUrl,
+            sourceUrl: mediaItem.sourceUrl,
+            name: mediaItem.name,
+            mediaKind: mediaItem.mediaKind,
+            isGif: mediaItem.isGif,
             paused: false,
             z: nextZRef.current++,
           };
@@ -2739,8 +2914,8 @@ function App() {
     };
   }, [isEditorFocused]);
 
-  const saveVersion = () => {
-    const snapshot = buildSnapshot(
+  const saveVersion = async () => {
+    const snapshot = await buildSnapshotWithMaterializedMedia(
       images,
       activeFrames,
       activeMediaTransforms,
@@ -3989,7 +4164,7 @@ function App() {
             setSelectedIds([]);
           }}
         >
-          {frameViews.map(({ frame, bounds }) => (
+          {renderedFrameViews.map(({ frame, bounds }) => (
             (() => {
               const activeItem = getFrameActiveItem(frame);
               const previewItems = getFrameItems(frame).slice(0, 3);
@@ -4045,7 +4220,7 @@ function App() {
             })()
           ))}
 
-          {visibleImages.map((image) => {
+          {renderedImages.map((image) => {
             const activeScaleMode = scaleMode;
             const activeMoveMode = moveMode;
             const scalePreview = activeScaleMode?.startItems[image.id];

@@ -7,6 +7,15 @@ export type ItemRect = {
   bottom: number;
 };
 
+export type ViewportBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
 export type GroupBounds = {
   left: number;
   top: number;
