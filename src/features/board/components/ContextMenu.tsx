@@ -18,6 +18,8 @@ function getContextLabel(menu: ContextMenuState) {
       return menu.target.nodeName
     case 'selection':
       return `${menu.target.selectedIds.length} selected`
+    case 'frame':
+      return menu.target.frameName
   }
 }
 
