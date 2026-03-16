@@ -50,6 +50,9 @@ type MediaExportResult =
       failureLabel: string;
     };
 
+const MEDIA_DOWNLOAD_CONCURRENCY_LIMIT = 4;
+const DOWNLOAD_URL_REVOKE_DELAY_MS = 1_000;
+
 const padIndex = (value: number) => String(value).padStart(2, "0");
 
 const sanitizeFileSegment = (value: string | undefined, fallback: string) => {
@@ -123,32 +126,6 @@ const buildItemPrefix = (itemIndex: number, item: BoardImage) =>
 const buildNotePath = (rootFolder: string, itemIndex: number, item: BoardImage) =>
   `${rootFolder}/${buildItemPrefix(itemIndex, item)}.md`;
 
-const buildSingleMediaPath = (
-  rootFolder: string,
-  itemIndex: number,
-  item: BoardImage,
-  mediaItem: NodeMediaItem,
-  mimeType: string,
-) =>
-  `${rootFolder}/${padIndex(itemIndex + 1)}-${resolveMediaFileName(
-    mediaItem.name,
-    sanitizeFileSegment(item.name, `media-${itemIndex + 1}`),
-    mimeType,
-  )}`;
-
-const buildMultiMediaPath = (
-  rootFolder: string,
-  itemPrefix: string,
-  mediaIndex: number,
-  mediaItem: NodeMediaItem,
-  mimeType: string,
-) =>
-  `${rootFolder}/${itemPrefix}/${padIndex(mediaIndex + 1)}-${resolveMediaFileName(
-    mediaItem.name,
-    `media-${mediaIndex + 1}`,
-    mimeType,
-  )}`;
-
 const formatFailedEntryLabel = (
   item: BoardImage,
   mediaItem?: NodeMediaItem,
@@ -182,10 +159,36 @@ const ensureUniquePath = (path: string, usedPaths: Set<string>) => {
   return candidate;
 };
 
+const resolveMediaPath = (
+  mediaItem: NodeMediaItem,
+  pathPrefix: string,
+  fallbackBaseName: string,
+  mimeType: string,
+  usedPaths: Set<string>,
+) =>
+  ensureUniquePath(
+    `${pathPrefix}${resolveMediaFileName(mediaItem.name, fallbackBaseName, mimeType)}`,
+    usedPaths,
+  );
+
 const buildMediaJobs = (rootFolder: string, items: BoardImage[]) => {
   const usedPaths = new Set<string>();
   const mediaJobs: MediaExportJob[] = [];
   const notes: Array<{ path: string; content: string }> = [];
+  const resolveJobPath =
+    (job: {
+      mediaItem: NodeMediaItem;
+      pathPrefix: string;
+      fallbackBaseName: string;
+    }) =>
+    (mimeType: string) =>
+      resolveMediaPath(
+        job.mediaItem,
+        job.pathPrefix,
+        job.fallbackBaseName,
+        mimeType,
+        usedPaths,
+      );
 
   for (const [itemIndex, item] of items.entries()) {
     if (item.mediaKind === "note") {
@@ -203,11 +206,11 @@ const buildMediaJobs = (rootFolder: string, items: BoardImage[]) => {
       mediaJobs.push({
         mediaItem,
         failureLabel: formatFailedEntryLabel(item),
-        buildPath: (mimeType: string) =>
-          ensureUniquePath(
-            buildSingleMediaPath(rootFolder, itemIndex, item, mediaItem, mimeType),
-            usedPaths,
-          ),
+        buildPath: resolveJobPath({
+          mediaItem,
+          pathPrefix: `${rootFolder}/${padIndex(itemIndex + 1)}-`,
+          fallbackBaseName: sanitizeFileSegment(item.name, `media-${itemIndex + 1}`),
+        }),
       });
       continue;
     }
@@ -217,17 +220,11 @@ const buildMediaJobs = (rootFolder: string, items: BoardImage[]) => {
       mediaJobs.push({
         mediaItem,
         failureLabel: formatFailedEntryLabel(item, mediaItem),
-        buildPath: (mimeType: string) =>
-          ensureUniquePath(
-            buildMultiMediaPath(
-              rootFolder,
-              itemPrefix,
-              mediaIndex,
-              mediaItem,
-              mimeType,
-            ),
-            usedPaths,
-          ),
+        buildPath: resolveJobPath({
+          mediaItem,
+          pathPrefix: `${rootFolder}/${itemPrefix}/${padIndex(mediaIndex + 1)}-`,
+          fallbackBaseName: `media-${mediaIndex + 1}`,
+        }),
       });
     }
   }
@@ -240,24 +237,13 @@ const mapWithConcurrency = async <TItem, TResult>(
   limit: number,
   worker: (item: TItem) => Promise<TResult>,
 ) => {
-  if (items.length === 0) {
-    return [] as TResult[];
+  const results: TResult[] = [];
+
+  for (let start = 0; start < items.length; start += limit) {
+    const batch = items.slice(start, start + limit);
+    const batchResults = await Promise.all(batch.map(worker));
+    results.push(...batchResults);
   }
-
-  const results = new Array<TResult>(items.length);
-  let nextIndex = 0;
-
-  const runWorker = async () => {
-    while (nextIndex < items.length) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      results[currentIndex] = await worker(items[currentIndex]);
-    }
-  };
-
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, () => runWorker()),
-  );
 
   return results;
 };
@@ -279,11 +265,15 @@ export const downloadFrameAsZip = async (
 
   const mediaResults = await mapWithConcurrency(
     mediaJobs,
-    4,
+    MEDIA_DOWNLOAD_CONCURRENCY_LIMIT,
     async (job): Promise<MediaExportResult> => {
       try {
         const blob = await readMediaBlob(job.mediaItem);
-        return { ok: true, path: job.buildPath(blob.type), blob };
+        return {
+          ok: true,
+          path: job.buildPath(blob.type),
+          blob,
+        };
       } catch {
         return { ok: false, failureLabel: job.failureLabel };
       }
@@ -310,9 +300,11 @@ export const downloadFrameAsZip = async (
   link.href = href;
   link.download = `${rootFolder}.zip`;
   link.click();
+  // Keep the Blob URL alive briefly so slower environments can start the
+  // download without holding large archives in memory for long.
   window.setTimeout(() => {
     URL.revokeObjectURL(href);
-  }, 0);
+  }, DOWNLOAD_URL_REVOKE_DELAY_MS);
 
   return { downloadedCount, failedEntries } satisfies FrameZipDownloadResult;
 };
