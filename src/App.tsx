@@ -20,6 +20,7 @@ import {
   createMediaItemFromFile,
   createViewportBounds,
   DEFAULT_BACKGROUND_SHADER_ID,
+  downloadFrameAsZip,
   doesGroupBoundsIntersectViewport,
   doesItemRectIntersectViewport,
   expandViewportBounds,
@@ -770,6 +771,7 @@ function App() {
             title: contextMenu.target.frameName,
             items: [
               { id: "frame.layout", label: "Layout", shortcut: "Ctrl+L" },
+              { id: "frame.download-zip", label: "Download .zip" },
             ],
           },
         ];
@@ -998,6 +1000,44 @@ function App() {
       .map((memberId) => imageById.get(memberId) ?? null)
       .filter((item): item is BoardImage => item !== null);
     return members;
+  };
+
+  const downloadFrameZip = async (frameId: number) => {
+    const frame = activeFrames.find((entry) => entry.id === frameId);
+    if (!frame) {
+      return;
+    }
+
+    const items = getFrameItems(frame);
+    if (items.length === 0) {
+      window.alert("This frame has no nodes to download.");
+      return;
+    }
+
+    try {
+      const result = await downloadFrameAsZip(frame.name, items);
+
+      if (result.downloadedCount === 0) {
+        window.alert("Unable to download this frame because none of its files could be read.");
+        return;
+      }
+
+      if (result.failedEntries.length > 0) {
+        const failedList = result.failedEntries.slice(0, 5).join(", ");
+        const overflow =
+          result.failedEntries.length > 5
+            ? `, and ${result.failedEntries.length - 5} more`
+            : "";
+
+        window.alert(
+          `Downloaded ${result.downloadedCount} file(s), but skipped: ${failedList}${overflow}.`,
+        );
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unexpected archive error";
+      window.alert(`Unable to download frame zip: ${message}`);
+    }
   };
 
   const toggleFrameCollapsed = (frameId: number) => {
@@ -4711,6 +4751,14 @@ function App() {
               actionId === "frame.layout"
             ) {
               layoutNodes(menuTarget.memberIds);
+              return;
+            }
+
+            if (
+              menuTarget.kind === "frame" &&
+              actionId === "frame.download-zip"
+            ) {
+              void downloadFrameZip(menuTarget.frameId);
               return;
             }
 
