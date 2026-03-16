@@ -1,7 +1,15 @@
 import { MEDIA_SHINE_SHADER_FS } from "../constants";
 import ShaderSurface from "./ShaderSurface";
 
-function MediaShineFx() {
+type MediaShineFxProps = {
+  active?: boolean;
+};
+
+function MediaShineFx({ active = true }: MediaShineFxProps) {
+  if (!active) {
+    return null;
+  }
+
   return (
     <ShaderSurface
       fs={MEDIA_SHINE_SHADER_FS}

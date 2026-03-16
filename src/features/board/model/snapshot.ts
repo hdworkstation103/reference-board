@@ -1,4 +1,5 @@
 import { MIN_IMAGE_WIDTH, NOTE_DEFAULT_ASPECT } from "../constants";
+import { materializeBoardImageForPersistence } from "../media/io";
 import type { BoardFrame, BoardImage, MediaTransformSettings, NodeMediaItem } from "./board";
 
 type SnapshotMedia = {
@@ -415,6 +416,19 @@ export const buildSnapshot = (
     mediaTransforms,
     darkMode,
   };
+};
+
+export const buildSnapshotWithMaterializedMedia = async (
+  images: BoardImage[],
+  frames: BoardFrame[],
+  mediaTransforms: Record<number, MediaTransformSettings>,
+  darkMode: boolean,
+) => {
+  const materializedImages = await Promise.all(
+    images.map((image) => materializeBoardImageForPersistence(image)),
+  );
+
+  return buildSnapshot(materializedImages, frames, mediaTransforms, darkMode);
 };
 
 export const parseSnapshot = (text: string): ParsedSnapshot => {

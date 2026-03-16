@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { WORLD_ORIGIN } from "../constants";
 import type { BoardFrame, BoardImage, GroupBounds } from "../model";
 
@@ -54,8 +54,6 @@ function FramePreview({ item }: { item: BoardImage | null }) {
         className="frame-node-preview-media"
         src={item.src}
         muted
-        loop
-        autoPlay
         playsInline
         preload="metadata"
       />
@@ -96,8 +94,6 @@ function TuckedPreviewRow({ item }: { item: BoardImage }) {
       className="frame-node-list-thumb"
       src={item.src}
       muted
-      loop
-      autoPlay
       playsInline
       preload="metadata"
     />
@@ -367,4 +363,53 @@ function FrameNode({
   );
 }
 
-export default FrameNode;
+const areFrameNodePropsEqual = (
+  prevProps: FrameNodeProps,
+  nextProps: FrameNodeProps,
+) => {
+  if (
+    prevProps.frame.id !== nextProps.frame.id ||
+    prevProps.frame.name !== nextProps.frame.name ||
+    prevProps.frame.collapsed !== nextProps.frame.collapsed ||
+    prevProps.frame.activeMemberIndex !== nextProps.frame.activeMemberIndex ||
+    prevProps.frame.slideshowPlaying !== nextProps.frame.slideshowPlaying ||
+    prevProps.frame.z !== nextProps.frame.z ||
+    prevProps.frame.memberIds.length !== nextProps.frame.memberIds.length ||
+    prevProps.bounds.left !== nextProps.bounds.left ||
+    prevProps.bounds.top !== nextProps.bounds.top ||
+    prevProps.bounds.width !== nextProps.bounds.width ||
+    prevProps.bounds.height !== nextProps.bounds.height ||
+    prevProps.selected !== nextProps.selected ||
+    prevProps.renameRequested !== nextProps.renameRequested ||
+    prevProps.displayZIndex !== nextProps.displayZIndex ||
+    prevProps.hiddenCount !== nextProps.hiddenCount
+  ) {
+    return false;
+  }
+
+  const prevActiveId = prevProps.activeItem?.id ?? null;
+  const nextActiveId = nextProps.activeItem?.id ?? null;
+  if (prevActiveId !== nextActiveId) {
+    return false;
+  }
+
+  for (let index = 0; index < prevProps.frame.memberIds.length; index += 1) {
+    if (prevProps.frame.memberIds[index] !== nextProps.frame.memberIds[index]) {
+      return false;
+    }
+  }
+
+  if (prevProps.previewItems.length !== nextProps.previewItems.length) {
+    return false;
+  }
+
+  for (let index = 0; index < prevProps.previewItems.length; index += 1) {
+    if (prevProps.previewItems[index].id !== nextProps.previewItems[index].id) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+export default memo(FrameNode, areFrameNodePropsEqual);

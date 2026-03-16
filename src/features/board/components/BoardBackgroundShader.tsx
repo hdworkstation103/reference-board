@@ -103,6 +103,10 @@ function BoardBackgroundShader({
   }, [boardWrapRef])
 
   useEffect(() => {
+    if (!enabled) {
+      return
+    }
+
     const target = {
       x: viewport.scrollLeft,
       y: viewport.scrollTop,
@@ -132,6 +136,12 @@ function BoardBackgroundShader({
     }
 
     const animateShaderOffset = (timestamp: number) => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        shaderFrameRef.current = 0
+        lastTimestampRef.current = 0
+        return
+      }
+
       if (lastTimestampRef.current === 0) {
         lastTimestampRef.current = timestamp
       }
@@ -182,7 +192,7 @@ function BoardBackgroundShader({
     }
 
     shaderFrameRef.current = window.requestAnimationFrame(animateShaderOffset)
-  }, [viewport.scrollLeft, viewport.scrollTop])
+  }, [enabled, viewport.scrollLeft, viewport.scrollTop])
 
   useEffect(() => {
     return () => {

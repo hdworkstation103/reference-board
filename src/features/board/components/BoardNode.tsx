@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { CARD_BORDER_HEIGHT, CAPTION_HEIGHT, WORLD_ORIGIN } from '../constants'
 import type { BoardImage, MediaTimeline } from '../model'
@@ -168,4 +169,68 @@ function BoardNode({
   )
 }
 
-export default BoardNode
+const areNodeMediaItemsEqual = (
+  left: BoardImage['mediaItems'],
+  right: BoardImage['mediaItems'],
+) => {
+  if (left === right) {
+    return true
+  }
+
+  const leftItems = left ?? []
+  const rightItems = right ?? []
+  if (leftItems.length !== rightItems.length) {
+    return false
+  }
+
+  for (let index = 0; index < leftItems.length; index += 1) {
+    const leftItem = leftItems[index]
+    const rightItem = rightItems[index]
+    if (
+      leftItem.src !== rightItem.src ||
+      leftItem.sourceDataUrl !== rightItem.sourceDataUrl ||
+      leftItem.sourceUrl !== rightItem.sourceUrl ||
+      leftItem.name !== rightItem.name ||
+      leftItem.mediaKind !== rightItem.mediaKind ||
+      leftItem.isGif !== rightItem.isGif
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
+
+const areBoardNodePropsEqual = (
+  prevProps: BoardNodeProps,
+  nextProps: BoardNodeProps,
+) =>
+  prevProps.image.id === nextProps.image.id &&
+  prevProps.image.src === nextProps.image.src &&
+  prevProps.image.name === nextProps.image.name &&
+  prevProps.image.mediaKind === nextProps.image.mediaKind &&
+  prevProps.image.isGif === nextProps.image.isGif &&
+  prevProps.image.paused === nextProps.image.paused &&
+  prevProps.image.gifFreezeSrc === nextProps.image.gifFreezeSrc &&
+  prevProps.image.activeMediaIndex === nextProps.image.activeMediaIndex &&
+  prevProps.image.slideshowPlaying === nextProps.image.slideshowPlaying &&
+  prevProps.image.noteMarkdown === nextProps.image.noteMarkdown &&
+  prevProps.image.noteMode === nextProps.image.noteMode &&
+  prevProps.image.aspect === nextProps.image.aspect &&
+  prevProps.image.z === nextProps.image.z &&
+  areNodeMediaItemsEqual(prevProps.image.mediaItems, nextProps.image.mediaItems) &&
+  prevProps.selected === nextProps.selected &&
+  prevProps.displayX === nextProps.displayX &&
+  prevProps.displayY === nextProps.displayY &&
+  prevProps.displayWidth === nextProps.displayWidth &&
+  prevProps.broken === nextProps.broken &&
+  prevProps.mediaTransformCss === nextProps.mediaTransformCss &&
+  prevProps.mediaTransformOrigin === nextProps.mediaTransformOrigin &&
+  prevProps.enableSelectionShader === nextProps.enableSelectionShader &&
+  prevProps.seekPanelOpen === nextProps.seekPanelOpen &&
+  prevProps.videoTimeline?.current === nextProps.videoTimeline?.current &&
+  prevProps.videoTimeline?.duration === nextProps.videoTimeline?.duration &&
+  prevProps.gifFrameCount === nextProps.gifFrameCount &&
+  prevProps.gifSeekFrame === nextProps.gifSeekFrame
+
+export default memo(BoardNode, areBoardNodePropsEqual)
