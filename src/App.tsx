@@ -23,6 +23,7 @@ import {
   doesGroupBoundsIntersectViewport,
   doesItemRectIntersectViewport,
   expandViewportBounds,
+  extractDroppedMediaFiles,
   extractDropSourceUrls,
   FrameNode,
   getBackgroundShaderOption,
@@ -135,6 +136,9 @@ const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
 const BACKGROUND_SHADER_SETTING_ID = "rendering.backgroundShader";
 const INSPECTOR_WIDTH_SETTING_ID = "workspace.inspectorWidth";
 const SHADER_SANDBOX_SETTING_ID = "workspace.shaderSandbox";
+const MEDIA_IMPORT_GRID_COLUMNS = 5;
+const MEDIA_IMPORT_SPACING_X = IMAGE_WIDTH + 30;
+const MEDIA_IMPORT_SPACING_Y = 220;
 
 const applyInteractionPreviewToImages = (
   sourceImages: BoardImage[],
@@ -2583,11 +2587,100 @@ function App() {
       .filter((file): file is File => file !== null);
   };
 
+  const addPreparedMediaToDocument = (
+    prepared: Array<PreparedMedia & { sourceUrl?: string }>,
+    anchor?: { x: number; y: number },
+    historyLabel = "Add Media",
+    frameOptions?: {
+      name?: string;
+      collapsed?: boolean;
+    },
+  ) => {
+    if (prepared.length === 0) {
+      return;
+    }
+
+    const before = cloneDocument(documentRef.current);
+    const nextImages = prepared.map((item, index) => {
+      const row = Math.floor(index / MEDIA_IMPORT_GRID_COLUMNS);
+      const col = index % MEDIA_IMPORT_GRID_COLUMNS;
+      const x = anchor
+        ? anchor.x - IMAGE_WIDTH / 2 + col * MEDIA_IMPORT_SPACING_X
+        : START_X +
+          ((before.images.length + index) % MEDIA_IMPORT_GRID_COLUMNS) *
+            MEDIA_IMPORT_SPACING_X;
+      const y = anchor
+        ? anchor.y + row * MEDIA_IMPORT_SPACING_Y
+        : START_Y +
+          Math.floor((before.images.length + index) / MEDIA_IMPORT_GRID_COLUMNS) *
+            MEDIA_IMPORT_SPACING_Y;
+
+      return {
+        id: item.id,
+        src: item.src,
+        sourceDataUrl: item.sourceDataUrl,
+        sourceUrl: item.sourceUrl,
+        name: item.name,
+        mediaKind: item.mediaKind,
+        isGif: item.isGif,
+        paused: item.paused,
+        slideshowPlaying: false,
+        x,
+        y,
+        width: IMAGE_WIDTH,
+        aspect: 1,
+        z: item.z,
+      };
+    });
+
+    const nextFrames = [...before.frames];
+    if (frameOptions) {
+      nextFrames.push({
+        id: nextFrameIdRef.current++,
+        name: frameOptions.name ?? `Frame ${nextFrames.length + 1}`,
+        memberIds: prepared.map((item) => item.id),
+        collapsed: frameOptions.collapsed ?? false,
+        activeMemberIndex: 0,
+        slideshowPlaying: false,
+        z: nextZRef.current++,
+      });
+    }
+
+    const after = {
+      ...before,
+      images: [...before.images, ...nextImages],
+      frames: nextFrames,
+    };
+    applyDocument(after);
+    recordHistoryEntry(historyLabel, before, after);
+
+    if (frameOptions) {
+      setSelectedId(null);
+      setSelectedIds([]);
+      setSelectedFrameId(nextFrames[nextFrames.length - 1]?.id ?? null);
+      return;
+    }
+
+    const newIds = prepared.map((item) => item.id);
+    if (newIds.length > 1) {
+      setSelectedIds(newIds);
+      setSelectedId(newIds[newIds.length - 1]);
+      setSelectedFrameId(null);
+      return;
+    }
+
+    setSelectedFrameId(null);
+  };
+
   const handleFiles = async (
-    fileList: FileList | null,
+    fileList: FileList | File[] | null,
     anchor?: { x: number; y: number },
     sourceUrls?: string[],
     historyLabel = "Add Media",
+    frameOptions?: {
+      name?: string;
+      collapsed?: boolean;
+    },
   ) => {
     if (!fileList || fileList.length === 0) {
       return;
@@ -2630,50 +2723,7 @@ function App() {
       ),
     );
 
-    const before = cloneDocument(documentRef.current);
-    const nextImages = (() => {
-      const cols = 5;
-      return prepared.map((item, i) => {
-        const row = Math.floor(i / cols);
-        const col = i % cols;
-        const x = anchor
-          ? anchor.x - IMAGE_WIDTH / 2 + col * (IMAGE_WIDTH + 30)
-          : START_X + ((before.images.length + i) % cols) * (IMAGE_WIDTH + 30);
-        const y = anchor
-          ? anchor.y + row * 220
-          : START_Y + Math.floor((before.images.length + i) / cols) * 220;
-
-        return {
-          id: item.id,
-          src: item.src,
-          sourceDataUrl: item.sourceDataUrl,
-          sourceUrl: item.sourceUrl,
-          name: item.name,
-          mediaKind: item.mediaKind,
-          isGif: item.isGif,
-          paused: item.paused,
-          slideshowPlaying: false,
-          x,
-          y,
-          width: IMAGE_WIDTH,
-          aspect: 1,
-          z: item.z,
-        };
-      });
-    })();
-
-    const after = {
-      ...before,
-      images: [...before.images, ...nextImages],
-    };
-    applyDocument(after);
-    recordHistoryEntry(historyLabel, before, after);
-
-    if (prepared.length > 1) {
-      const newIds = prepared.map((item) => item.id);
-      setSelectedIds(newIds);
-      setSelectedId(newIds[newIds.length - 1]);
-    }
+    addPreparedMediaToDocument(prepared, anchor, historyLabel, frameOptions);
   };
 
   const replaceNodeWithFile = async (
@@ -2866,7 +2916,7 @@ function App() {
     );
   };
 
-  const handleBoardDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+  const handleBoardDrop = async (event: ReactDragEvent<HTMLDivElement>) => {
     event.preventDefault();
 
     const droppedSnapshot = Array.from(event.dataTransfer.files).find(
@@ -2877,14 +2927,12 @@ function App() {
     if (droppedSnapshot) {
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(droppedSnapshot);
-      void loadVersion(dataTransfer.files);
+      await loadVersion(dataTransfer.files);
       return;
     }
 
-    const droppedFiles = Array.from(event.dataTransfer.files).filter(
-      (file) =>
-        file.type.startsWith("image/") || file.type.startsWith("video/"),
-    );
+    const { files: droppedFiles, fromDirectory, topLevelDirectoryNames } =
+      await extractDroppedMediaFiles(event.dataTransfer);
     if (droppedFiles.length === 0) {
       return;
     }
@@ -2892,6 +2940,24 @@ function App() {
     const point = getBoardPointFromClient(event.clientX, event.clientY);
     const sourceUrls = extractDropSourceUrls(event.dataTransfer);
     const sourceUrl = sourceUrls.length > 0 ? sourceUrls[0] : undefined;
+
+    if (fromDirectory) {
+      const frameName =
+        topLevelDirectoryNames.length === 1
+          ? topLevelDirectoryNames[0]
+          : "Dropped Folders";
+      await handleFiles(
+        droppedFiles,
+        point ?? undefined,
+        undefined,
+        "Add Folder",
+        {
+          name: frameName,
+          collapsed: true,
+        },
+      );
+      return;
+    }
 
     const shouldAppendToNode = event.shiftKey || keyStateRef.current.shift;
 
@@ -2911,15 +2977,15 @@ function App() {
 
       if (targetNode) {
         if (shouldAppendToNode) {
-          void appendMediaToNode(targetNode.id, droppedFiles, sourceUrls);
+          await appendMediaToNode(targetNode.id, droppedFiles, sourceUrls);
           return;
         }
-        void replaceNodeWithFile(targetNode.id, droppedFiles[0], sourceUrl);
+        await replaceNodeWithFile(targetNode.id, droppedFiles[0], sourceUrl);
         return;
       }
     }
 
-    void handleFiles(event.dataTransfer.files, point ?? undefined, sourceUrls);
+    await handleFiles(droppedFiles, point ?? undefined, sourceUrls);
   };
 
   const addNote = (anchor?: { x: number; y: number }) => {
