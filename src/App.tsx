@@ -240,6 +240,143 @@ const scheduleIdleTask = (callback: () => void) => {
   };
 };
 
+const areNodeMediaItemsEqual = (
+  left: NodeMediaItem[] | undefined,
+  right: NodeMediaItem[] | undefined,
+) => {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const leftItem = left[index];
+    const rightItem = right[index];
+    if (
+      leftItem.src !== rightItem.src ||
+      leftItem.sourceDataUrl !== rightItem.sourceDataUrl ||
+      leftItem.sourceUrl !== rightItem.sourceUrl ||
+      leftItem.name !== rightItem.name ||
+      leftItem.mediaKind !== rightItem.mediaKind ||
+      leftItem.isGif !== rightItem.isGif
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const areBoardImagesEqual = (left: BoardImage[], right: BoardImage[]) => {
+  if (left === right) {
+    return true;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const leftImage = left[index];
+    const rightImage = right[index];
+    if (
+      leftImage.id !== rightImage.id ||
+      leftImage.src !== rightImage.src ||
+      leftImage.sourceDataUrl !== rightImage.sourceDataUrl ||
+      leftImage.sourceUrl !== rightImage.sourceUrl ||
+      leftImage.name !== rightImage.name ||
+      leftImage.mediaKind !== rightImage.mediaKind ||
+      leftImage.isGif !== rightImage.isGif ||
+      leftImage.paused !== rightImage.paused ||
+      leftImage.gifFreezeSrc !== rightImage.gifFreezeSrc ||
+      leftImage.activeMediaIndex !== rightImage.activeMediaIndex ||
+      leftImage.slideshowPlaying !== rightImage.slideshowPlaying ||
+      leftImage.noteMarkdown !== rightImage.noteMarkdown ||
+      leftImage.noteMode !== rightImage.noteMode ||
+      leftImage.x !== rightImage.x ||
+      leftImage.y !== rightImage.y ||
+      leftImage.width !== rightImage.width ||
+      leftImage.aspect !== rightImage.aspect ||
+      leftImage.z !== rightImage.z ||
+      !areNodeMediaItemsEqual(leftImage.mediaItems, rightImage.mediaItems)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const areFramesEqual = (left: BoardFrame[], right: BoardFrame[]) => {
+  if (left === right) {
+    return true;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const leftFrame = left[index];
+    const rightFrame = right[index];
+    if (
+      leftFrame.id !== rightFrame.id ||
+      leftFrame.name !== rightFrame.name ||
+      leftFrame.collapsed !== rightFrame.collapsed ||
+      leftFrame.activeMemberIndex !== rightFrame.activeMemberIndex ||
+      leftFrame.slideshowPlaying !== rightFrame.slideshowPlaying ||
+      leftFrame.z !== rightFrame.z ||
+      leftFrame.memberIds.length !== rightFrame.memberIds.length
+    ) {
+      return false;
+    }
+
+    for (let memberIndex = 0; memberIndex < leftFrame.memberIds.length; memberIndex += 1) {
+      if (leftFrame.memberIds[memberIndex] !== rightFrame.memberIds[memberIndex]) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+};
+
+const areMediaTransformsEqual = (
+  left: Record<number, MediaTransformSettings>,
+  right: Record<number, MediaTransformSettings>,
+) => {
+  const leftEntries = Object.entries(left);
+  const rightEntries = Object.entries(right);
+  if (leftEntries.length !== rightEntries.length) {
+    return false;
+  }
+
+  for (const [id, leftSettings] of leftEntries) {
+    const rightSettings = right[Number(id)];
+    if (
+      !rightSettings ||
+      leftSettings.flipHorizontal !== rightSettings.flipHorizontal ||
+      leftSettings.translateX !== rightSettings.translateX ||
+      leftSettings.translateY !== rightSettings.translateY ||
+      leftSettings.scaleX !== rightSettings.scaleX ||
+      leftSettings.scaleY !== rightSettings.scaleY ||
+      leftSettings.rotateDeg !== rightSettings.rotateDeg ||
+      leftSettings.pivotX !== rightSettings.pivotX ||
+      leftSettings.pivotY !== rightSettings.pivotY
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const areBoardDocumentsEqual = (left: BoardDocument, right: BoardDocument) =>
+  left.darkMode === right.darkMode &&
+  areBoardImagesEqual(left.images, right.images) &&
+  areFramesEqual(left.frames, right.frames) &&
+  areMediaTransformsEqual(left.mediaTransforms, right.mediaTransforms);
+
 function App() {
   const boardSettings = useBoardSettings();
   const darkMode = boardSettings.values[DARK_MODE_SETTING_ID] === true;
@@ -330,7 +467,6 @@ function App() {
   });
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const imageIdSet = useMemo(() => new Set(images.map((item) => item.id)), [images]);
   const imageById = useMemo(
     () => new Map(images.map((item) => [item.id, item])),
     [images],
@@ -344,38 +480,38 @@ function App() {
     [displayImages],
   );
   const effectiveSeekPanelId = useMemo(
-    () => (seekPanelId !== null && imageIdSet.has(seekPanelId) ? seekPanelId : null),
-    [imageIdSet, seekPanelId],
+    () => (seekPanelId !== null && imageById.has(seekPanelId) ? seekPanelId : null),
+    [imageById, seekPanelId],
   );
   const activeBrokenMediaIds = useMemo(() => {
     const next: Record<number, true> = {};
     for (const key of Object.keys(brokenMediaIds)) {
       const id = Number(key);
-      if (imageIdSet.has(id)) {
+      if (imageById.has(id)) {
         next[id] = true;
       }
     }
     return next;
-  }, [brokenMediaIds, imageIdSet]);
+  }, [brokenMediaIds, imageById]);
   const activeMediaTransforms = useMemo(() => {
     const next: Record<number, MediaTransformSettings> = {};
     for (const key of Object.keys(mediaTransforms)) {
       const id = Number(key);
-      if (imageIdSet.has(id)) {
+      if (imageById.has(id)) {
         next[id] = mediaTransforms[id];
       }
     }
     return next;
-  }, [imageIdSet, mediaTransforms]);
+  }, [imageById, mediaTransforms]);
   const activeFrames = useMemo(
     () =>
       frames
         .map((frame) => ({
           ...frame,
-          memberIds: frame.memberIds.filter((id) => imageIdSet.has(id)),
+          memberIds: frame.memberIds.filter((id) => imageById.has(id)),
         }))
         .filter((frame) => frame.memberIds.length > 0),
-    [frames, imageIdSet],
+    [frames, imageById],
   );
   const activeFrameByMemberId = useMemo(() => {
     const next = new Map<number, BoardFrame>();
@@ -811,6 +947,10 @@ function App() {
     after: BoardDocument,
     visibilityPriority: HistoryVisibilityPriority = 0,
   ) => {
+    if (areBoardDocumentsEqual(before, after)) {
+      return;
+    }
+
     setHistoryEntries((current) => [
       ...current.slice(-(MAX_HISTORY_ENTRIES - 1)),
       {
@@ -989,7 +1129,7 @@ function App() {
     const uniqueMemberIds = memberIds.filter(
       (id, index) =>
         memberIds.indexOf(id) === index &&
-        imageIdSet.has(id),
+        imageById.has(id),
     );
     if (uniqueMemberIds.length === 0) {
       return;
@@ -1867,7 +2007,7 @@ function App() {
         event.preventDefault();
 
         const memberIds = selectedIds.filter((id) =>
-          imageIdSet.has(id),
+          imageById.has(id),
         );
         if (memberIds.length < 2) {
           return;
