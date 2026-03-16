@@ -136,6 +136,9 @@ const SHADER_COMPOSITING_SETTING_ID = "rendering.shaderCompositing";
 const BACKGROUND_SHADER_SETTING_ID = "rendering.backgroundShader";
 const INSPECTOR_WIDTH_SETTING_ID = "workspace.inspectorWidth";
 const SHADER_SANDBOX_SETTING_ID = "workspace.shaderSandbox";
+const MEDIA_IMPORT_GRID_COLUMNS = 5;
+const MEDIA_IMPORT_SPACING_X = IMAGE_WIDTH + 30;
+const MEDIA_IMPORT_SPACING_Y = 220;
 
 const applyInteractionPreviewToImages = (
   sourceImages: BoardImage[],
@@ -2598,16 +2601,19 @@ function App() {
     }
 
     const before = cloneDocument(documentRef.current);
-    const cols = 5;
     const nextImages = prepared.map((item, index) => {
-      const row = Math.floor(index / cols);
-      const col = index % cols;
+      const row = Math.floor(index / MEDIA_IMPORT_GRID_COLUMNS);
+      const col = index % MEDIA_IMPORT_GRID_COLUMNS;
       const x = anchor
-        ? anchor.x - IMAGE_WIDTH / 2 + col * (IMAGE_WIDTH + 30)
-        : START_X + ((before.images.length + index) % cols) * (IMAGE_WIDTH + 30);
+        ? anchor.x - IMAGE_WIDTH / 2 + col * MEDIA_IMPORT_SPACING_X
+        : START_X +
+          ((before.images.length + index) % MEDIA_IMPORT_GRID_COLUMNS) *
+            MEDIA_IMPORT_SPACING_X;
       const y = anchor
-        ? anchor.y + row * 220
-        : START_Y + Math.floor((before.images.length + index) / cols) * 220;
+        ? anchor.y + row * MEDIA_IMPORT_SPACING_Y
+        : START_Y +
+          Math.floor((before.images.length + index) / MEDIA_IMPORT_GRID_COLUMNS) *
+            MEDIA_IMPORT_SPACING_Y;
 
       return {
         id: item.id,
@@ -2663,8 +2669,6 @@ function App() {
       return;
     }
 
-    setSelectedId(newIds[0] ?? null);
-    setSelectedIds([]);
     setSelectedFrameId(null);
   };
 
@@ -2912,78 +2916,76 @@ function App() {
     );
   };
 
-  const handleBoardDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+  const handleBoardDrop = async (event: ReactDragEvent<HTMLDivElement>) => {
     event.preventDefault();
 
-    void (async () => {
-      const droppedSnapshot = Array.from(event.dataTransfer.files).find(
-        (file) =>
-          file.type === "application/json" ||
-          file.name.toLowerCase().endsWith(".json"),
+    const droppedSnapshot = Array.from(event.dataTransfer.files).find(
+      (file) =>
+        file.type === "application/json" ||
+        file.name.toLowerCase().endsWith(".json"),
+    );
+    if (droppedSnapshot) {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(droppedSnapshot);
+      await loadVersion(dataTransfer.files);
+      return;
+    }
+
+    const { files: droppedFiles, fromDirectory, topLevelDirectoryNames } =
+      await extractDroppedMediaFiles(event.dataTransfer);
+    if (droppedFiles.length === 0) {
+      return;
+    }
+
+    const point = getBoardPointFromClient(event.clientX, event.clientY);
+    const sourceUrls = extractDropSourceUrls(event.dataTransfer);
+    const sourceUrl = sourceUrls.length > 0 ? sourceUrls[0] : undefined;
+
+    if (fromDirectory) {
+      const frameName =
+        topLevelDirectoryNames.length === 1
+          ? topLevelDirectoryNames[0]
+          : "Dropped Folders";
+      await handleFiles(
+        droppedFiles,
+        point ?? undefined,
+        undefined,
+        "Add Folder",
+        {
+          name: frameName,
+          collapsed: true,
+        },
       );
-      if (droppedSnapshot) {
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(droppedSnapshot);
-        await loadVersion(dataTransfer.files);
-        return;
-      }
+      return;
+    }
 
-      const { files: droppedFiles, fromDirectory, topLevelDirectoryNames } =
-        await extractDroppedMediaFiles(event.dataTransfer);
-      if (droppedFiles.length === 0) {
-        return;
-      }
+    const shouldAppendToNode = event.shiftKey || keyStateRef.current.shift;
 
-      const point = getBoardPointFromClient(event.clientX, event.clientY);
-      const sourceUrls = extractDropSourceUrls(event.dataTransfer);
-      const sourceUrl = sourceUrls.length > 0 ? sourceUrls[0] : undefined;
+    if (point) {
+      const targetNode = [...images]
+        .filter((item) => item.mediaKind !== "note")
+        .sort((a, b) => b.z - a.z)
+        .find((item) => {
+          const rect = getItemRect(item);
+          return (
+            point.x >= rect.left &&
+            point.x <= rect.right &&
+            point.y >= rect.top &&
+            point.y <= rect.bottom
+          );
+        });
 
-      if (fromDirectory) {
-        const frameName =
-          topLevelDirectoryNames.length === 1
-            ? topLevelDirectoryNames[0]
-            : "Dropped Folders";
-        await handleFiles(
-          droppedFiles,
-          point ?? undefined,
-          undefined,
-          "Add Folder",
-          {
-            name: frameName,
-            collapsed: true,
-          },
-        );
-        return;
-      }
-
-      const shouldAppendToNode = event.shiftKey || keyStateRef.current.shift;
-
-      if (point) {
-        const targetNode = [...images]
-          .filter((item) => item.mediaKind !== "note")
-          .sort((a, b) => b.z - a.z)
-          .find((item) => {
-            const rect = getItemRect(item);
-            return (
-              point.x >= rect.left &&
-              point.x <= rect.right &&
-              point.y >= rect.top &&
-              point.y <= rect.bottom
-            );
-          });
-
-        if (targetNode) {
-          if (shouldAppendToNode) {
-            await appendMediaToNode(targetNode.id, droppedFiles, sourceUrls);
-            return;
-          }
-          await replaceNodeWithFile(targetNode.id, droppedFiles[0], sourceUrl);
+      if (targetNode) {
+        if (shouldAppendToNode) {
+          await appendMediaToNode(targetNode.id, droppedFiles, sourceUrls);
           return;
         }
+        await replaceNodeWithFile(targetNode.id, droppedFiles[0], sourceUrl);
+        return;
       }
+    }
 
-      await handleFiles(droppedFiles, point ?? undefined, sourceUrls);
-    })();
+    await handleFiles(droppedFiles, point ?? undefined, sourceUrls);
   };
 
   const addNote = (anchor?: { x: number; y: number }) => {

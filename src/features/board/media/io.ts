@@ -216,10 +216,12 @@ export const extractDroppedMediaFiles = async (transfer: DataTransfer | null) =>
     .map((entry) => entry.name)
 
   if (topLevelDirectoryNames.length > 0) {
-    const droppedFiles = (await Promise.all(
-      entryItems.map((entry) => collectEntryMediaFiles(entry)),
-    ))
-      .flat()
+    const droppedFiles = (
+      await Promise.allSettled(
+        entryItems.map((entry) => collectEntryMediaFiles(entry)),
+      )
+    )
+      .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
       .sort((left, right) => left.relativePath.localeCompare(right.relativePath))
 
     return {
