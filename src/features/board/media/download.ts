@@ -36,8 +36,7 @@ export type FrameZipDownloadResult = {
 type MediaExportJob = {
   mediaItem: NodeMediaItem;
   failureLabel: string;
-  pathPrefix: string;
-  fallbackBaseName: string;
+  buildPath: (mimeType: string) => string;
 };
 
 type MediaExportResult =
@@ -52,7 +51,7 @@ type MediaExportResult =
     };
 
 const MEDIA_DOWNLOAD_CONCURRENCY_LIMIT = 4;
-const DOWNLOAD_URL_REVOKE_DELAY_MS = 5_000;
+const DOWNLOAD_URL_REVOKE_DELAY_MS = 1_000;
 
 const padIndex = (value: number) => String(value).padStart(2, "0");
 
@@ -161,16 +160,14 @@ const ensureUniquePath = (path: string, usedPaths: Set<string>) => {
 };
 
 const resolveMediaPath = (
-  job: MediaExportJob,
+  mediaItem: NodeMediaItem,
+  pathPrefix: string,
+  fallbackBaseName: string,
   mimeType: string,
   usedPaths: Set<string>,
 ) =>
   ensureUniquePath(
-    `${job.pathPrefix}${resolveMediaFileName(
-      job.mediaItem.name,
-      job.fallbackBaseName,
-      mimeType,
-    )}`,
+    `${pathPrefix}${resolveMediaFileName(mediaItem.name, fallbackBaseName, mimeType)}`,
     usedPaths,
   );
 
@@ -178,6 +175,20 @@ const buildMediaJobs = (rootFolder: string, items: BoardImage[]) => {
   const usedPaths = new Set<string>();
   const mediaJobs: MediaExportJob[] = [];
   const notes: Array<{ path: string; content: string }> = [];
+  const resolveJobPath =
+    (job: {
+      mediaItem: NodeMediaItem;
+      pathPrefix: string;
+      fallbackBaseName: string;
+    }) =>
+    (mimeType: string) =>
+      resolveMediaPath(
+        job.mediaItem,
+        job.pathPrefix,
+        job.fallbackBaseName,
+        mimeType,
+        usedPaths,
+      );
 
   for (const [itemIndex, item] of items.entries()) {
     if (item.mediaKind === "note") {
@@ -195,8 +206,11 @@ const buildMediaJobs = (rootFolder: string, items: BoardImage[]) => {
       mediaJobs.push({
         mediaItem,
         failureLabel: formatFailedEntryLabel(item),
-        pathPrefix: `${rootFolder}/${padIndex(itemIndex + 1)}-`,
-        fallbackBaseName: sanitizeFileSegment(item.name, `media-${itemIndex + 1}`),
+        buildPath: resolveJobPath({
+          mediaItem,
+          pathPrefix: `${rootFolder}/${padIndex(itemIndex + 1)}-`,
+          fallbackBaseName: sanitizeFileSegment(item.name, `media-${itemIndex + 1}`),
+        }),
       });
       continue;
     }
@@ -206,13 +220,32 @@ const buildMediaJobs = (rootFolder: string, items: BoardImage[]) => {
       mediaJobs.push({
         mediaItem,
         failureLabel: formatFailedEntryLabel(item, mediaItem),
-        pathPrefix: `${rootFolder}/${itemPrefix}/${padIndex(mediaIndex + 1)}-`,
-        fallbackBaseName: `media-${mediaIndex + 1}`,
+        buildPath: resolveJobPath({
+          mediaItem,
+          pathPrefix: `${rootFolder}/${itemPrefix}/${padIndex(mediaIndex + 1)}-`,
+          fallbackBaseName: `media-${mediaIndex + 1}`,
+        }),
       });
     }
   }
 
-  return { notes, mediaJobs, usedPaths };
+  return { notes, mediaJobs };
+};
+
+const mapWithConcurrency = async <TItem, TResult>(
+  items: TItem[],
+  limit: number,
+  worker: (item: TItem) => Promise<TResult>,
+) => {
+  const results: TResult[] = [];
+
+  for (let start = 0; start < items.length; start += limit) {
+    const batch = items.slice(start, start + limit);
+    const batchResults = await Promise.all(batch.map(worker));
+    results.push(...batchResults);
+  }
+
+  return results;
 };
 
 export const downloadFrameAsZip = async (
@@ -221,7 +254,7 @@ export const downloadFrameAsZip = async (
 ) => {
   const zip = new JSZip();
   const rootFolder = getFrameRootName(frameName);
-  const { notes, mediaJobs, usedPaths } = buildMediaJobs(rootFolder, items);
+  const { notes, mediaJobs } = buildMediaJobs(rootFolder, items);
   let downloadedCount = 0;
   const failedEntries: string[] = [];
 
@@ -230,32 +263,22 @@ export const downloadFrameAsZip = async (
     downloadedCount += 1;
   }
 
-  const mediaResults: MediaExportResult[] = [];
-  for (
-    let batchStart = 0;
-    batchStart < mediaJobs.length;
-    batchStart += MEDIA_DOWNLOAD_CONCURRENCY_LIMIT
-  ) {
-    const batch = mediaJobs.slice(
-      batchStart,
-      batchStart + MEDIA_DOWNLOAD_CONCURRENCY_LIMIT,
-    );
-    const batchResults = await Promise.all(
-      batch.map(async (job): Promise<MediaExportResult> => {
-        try {
-          const blob = await readMediaBlob(job.mediaItem);
-          return {
-            ok: true,
-            path: resolveMediaPath(job, blob.type, usedPaths),
-            blob,
-          };
-        } catch {
-          return { ok: false, failureLabel: job.failureLabel };
-        }
-      }),
-    );
-    mediaResults.push(...batchResults);
-  }
+  const mediaResults = await mapWithConcurrency(
+    mediaJobs,
+    MEDIA_DOWNLOAD_CONCURRENCY_LIMIT,
+    async (job): Promise<MediaExportResult> => {
+      try {
+        const blob = await readMediaBlob(job.mediaItem);
+        return {
+          ok: true,
+          path: job.buildPath(blob.type),
+          blob,
+        };
+      } catch {
+        return { ok: false, failureLabel: job.failureLabel };
+      }
+    },
+  );
 
   for (const result of mediaResults) {
     if (!result.ok) {
@@ -277,6 +300,8 @@ export const downloadFrameAsZip = async (
   link.href = href;
   link.download = `${rootFolder}.zip`;
   link.click();
+  // Keep the Blob URL alive briefly so slower environments can start the
+  // download without holding large archives in memory for long.
   window.setTimeout(() => {
     URL.revokeObjectURL(href);
   }, DOWNLOAD_URL_REVOKE_DELAY_MS);
