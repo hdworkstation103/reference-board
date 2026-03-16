@@ -152,7 +152,14 @@ const buildMultiMediaPath = (
 const formatFailedEntryLabel = (
   item: BoardImage,
   mediaItem?: NodeMediaItem,
-) => (mediaItem ? `${item.name} / ${mediaItem.name}` : item.name);
+) => {
+  const itemLabel = sanitizeFileSegment(item.name, `node-${item.id}`);
+  if (!mediaItem) {
+    return itemLabel;
+  }
+
+  return `${itemLabel} / ${sanitizeFileSegment(mediaItem.name, `media-${item.id}`)}`;
+};
 
 const ensureUniquePath = (path: string, usedPaths: Set<string>) => {
   const slashIndex = path.lastIndexOf("/");
