@@ -11,9 +11,9 @@ type SearchIqdbOptions = {
 };
 
 const sanitizeBaseName = (value: string | undefined) => {
-  const cleaned = (value ?? "image")
-    .trim()
-    .replace(/\.[^.]+$/u, "")
+  let cleaned = (value ?? "image").trim().replace(/\.[^.]+$/u, "");
+
+  cleaned = cleaned
     .split("")
     .map((character) =>
       INVALID_FILENAME_CHARACTERS.has(character) || character.charCodeAt(0) < 32
@@ -52,7 +52,7 @@ const readBlob = async (source: string) => {
 };
 
 const readFirstAvailableBlob = async (sources: Array<string | undefined>) => {
-  let lastError: unknown = null;
+  let lastError: Error | null = null;
 
   for (const source of sources) {
     if (!source) {
@@ -62,11 +62,16 @@ const readFirstAvailableBlob = async (sources: Array<string | undefined>) => {
     try {
       return await readBlob(source);
     } catch (error) {
-      lastError = error;
+      lastError =
+        error instanceof Error ? error : new Error("Failed to read media");
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error("Missing media source");
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new Error("Missing media source");
 };
 
 const loadImageElement = (source: string) =>
@@ -106,18 +111,17 @@ const createPngFileForImage = async (
   sourceBlob: Blob,
   imageElement?: HTMLImageElement | null,
 ) => {
-  if (
-    image.isGif &&
-    !image.gifFreezeSrc &&
-    imageElement?.naturalWidth &&
-    imageElement?.naturalHeight
-  ) {
-    return drawImageToPngFile(
-      imageElement,
-      imageElement.naturalWidth,
-      imageElement.naturalHeight,
-      image.name,
-    );
+  if (image.isGif && !image.gifFreezeSrc && imageElement) {
+    try {
+      return await drawImageToPngFile(
+        imageElement,
+        imageElement.naturalWidth,
+        imageElement.naturalHeight,
+        image.name,
+      );
+    } catch {
+      // Fallback to a blob-backed image when the live element can't be drawn.
+    }
   }
 
   const objectUrl = URL.createObjectURL(sourceBlob);
@@ -156,8 +160,8 @@ const createIqdbUploadFile = async ({
   imageElement,
   videoElement,
 }: SearchIqdbOptions) => {
-  if (image.mediaKind === "note") {
-    throw new Error("Notes cannot be searched in IQDB");
+  if (image.mediaKind === "video") {
+    return createPngFileForVideo(image, videoElement);
   }
 
   const blob = await readFirstAvailableBlob([
@@ -170,10 +174,6 @@ const createIqdbUploadFile = async ({
     return new File([blob], buildPngFileName(image.name), {
       type: "image/png",
     });
-  }
-
-  if (image.mediaKind === "video") {
-    return createPngFileForVideo(image, videoElement);
   }
 
   return createPngFileForImage(image, blob, imageElement);
@@ -233,6 +233,10 @@ const openPendingIqdbTab = () => {
 };
 
 export const openIqdbSearchForNode = async (options: SearchIqdbOptions) => {
+  if (options.image.mediaKind === "note") {
+    throw new Error("Notes cannot be searched in IQDB");
+  }
+
   const { targetName, tab } = openPendingIqdbTab();
 
   try {
