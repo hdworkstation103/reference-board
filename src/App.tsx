@@ -38,6 +38,7 @@ import {
   InspectorPanel,
   isBlobUrl,
   loadPersistedBoardSnapshot,
+  openIqdbSearchForNode,
   MIN_IMAGE_WIDTH,
   NOTE_DEFAULT_ASPECT,
   parseSnapshot,
@@ -457,6 +458,7 @@ function App() {
     Record<number, { decoder: GifDecoderLike; frameCount: number }>
   >({});
   const groupFadeTimeoutRef = useRef<number | null>(null);
+  const imageRefs = useRef<Record<number, HTMLImageElement | null>>({});
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
   const videoTimelinesRef = useRef<Record<number, MediaTimeline>>({});
   const pendingVideoSeekRef = useRef<Record<number, number>>({});
@@ -713,6 +715,11 @@ function App() {
               {
                 id: "node.replace-media",
                 label: "Replace media",
+                disabled: contextMenu.target.nodeMediaKind === "note",
+              },
+              {
+                id: "node.search-iqdb",
+                label: "Search IQDB",
                 disabled: contextMenu.target.nodeMediaKind === "note",
               },
               {
@@ -4552,6 +4559,9 @@ function App() {
                     ),
                   );
                 }}
+                setImageRef={(id, element) => {
+                  imageRefs.current[id] = element;
+                }}
                 setVideoRef={(id, element) => {
                   videoRefs.current[id] = element;
                 }}
@@ -4768,6 +4778,32 @@ function App() {
                 })();
                 return;
               }
+            }
+
+            if (
+              menuTarget.kind === "node" &&
+              actionId === "node.search-iqdb" &&
+              menuTarget.nodeMediaKind !== "note"
+            ) {
+              void (async () => {
+                const node = imageById.get(menuTarget.nodeId);
+                if (!node || node.mediaKind === "note") {
+                  return;
+                }
+
+                try {
+                  await openIqdbSearchForNode({
+                    image: node,
+                    imageElement: imageRefs.current[node.id],
+                    videoElement: videoRefs.current[node.id],
+                  });
+                } catch (error) {
+                  const message =
+                    error instanceof Error ? error.message : "Unknown error";
+                  window.alert(`Unable to search IQDB: ${message}`);
+                }
+              })();
+              return;
             }
 
             if (
