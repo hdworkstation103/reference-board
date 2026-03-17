@@ -29,6 +29,7 @@ type BoardNodeProps = {
   onNoteFocusChange: (focused: boolean) => void
   onNoteMarkdownChange: (id: number, markdown: string) => void
   onToggleNoteMode: (id: number) => void
+  setImageRef: (id: number, element: HTMLImageElement | null) => void
   setVideoRef: (id: number, element: HTMLVideoElement | null) => void
   onVideoLoadedMetadata: (id: number, event: React.SyntheticEvent<HTMLVideoElement>) => void
   onVideoTimeUpdate: (id: number, event: React.SyntheticEvent<HTMLVideoElement>) => void
@@ -59,6 +60,7 @@ function BoardNode({
   onNoteFocusChange,
   onNoteMarkdownChange,
   onToggleNoteMode,
+  setImageRef,
   setVideoRef,
   onVideoLoadedMetadata,
   onVideoTimeUpdate,
@@ -113,6 +115,9 @@ function BoardNode({
           mediaTransformOrigin={mediaTransformOrigin}
           displayImageSrc={displayImageSrc}
           shouldUseBlurBg={shouldUseBlurBg}
+          setImageRef={(element) => {
+            setImageRef(image.id, element)
+          }}
           setVideoRef={(element) => {
             setVideoRef(image.id, element)
           }}
